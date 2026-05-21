@@ -1,21 +1,20 @@
 :root {
-  --bg: #f6f4ef;
+  --bg: #f4f6f1;
   --surface: #ffffff;
   --surface-soft: #f7faf7;
   --ink: #1d2524;
-  --muted: #697372;
-  --line: #dde5df;
+  --muted: #687371;
+  --line: #dce4de;
   --green: #207a5c;
   --green-soft: #e4f3ed;
-  --amber: #b7791f;
-  --amber-soft: #fff3d8;
+  --amber: #a96d1c;
+  --amber-soft: #fff2d7;
   --red: #b83d3d;
   --red-soft: #ffe4e2;
   --blue: #276a8f;
   --blue-soft: #e4f1f6;
   --shadow: 0 18px 45px rgba(29, 37, 36, 0.08);
-  font-family:
-    "Microsoft YaHei", "PingFang SC", "Segoe UI", Arial, sans-serif;
+  font-family: "Microsoft YaHei", "PingFang SC", "Segoe UI", Arial, sans-serif;
 }
 
 * {
@@ -38,6 +37,70 @@ textarea {
 
 button {
   cursor: pointer;
+}
+
+.auth-screen {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: #182523;
+}
+
+.auth-panel {
+  width: min(460px, 100%);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  padding: 26px;
+}
+
+.compact-brand {
+  color: var(--ink);
+  margin-bottom: 22px;
+}
+
+.compact-brand p {
+  color: var(--muted);
+}
+
+.auth-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+
+.auth-tab {
+  min-height: 40px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--surface-soft);
+  color: var(--ink);
+  font-weight: 800;
+}
+
+.auth-tab.active {
+  background: var(--green);
+  color: #fff;
+  border-color: var(--green);
+}
+
+.auth-form {
+  display: grid;
+  gap: 14px;
+}
+
+.auth-submit {
+  min-height: 44px;
+}
+
+.form-message {
+  min-height: 20px;
+  margin: 0;
+  color: var(--red);
+  font-size: 13px;
 }
 
 .app-shell {
@@ -100,10 +163,7 @@ button {
   border: 0;
   border-radius: 8px;
   min-height: 40px;
-  transition:
-    transform 0.15s ease,
-    box-shadow 0.15s ease,
-    background 0.15s ease;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
 }
 
 .primary-action {
@@ -137,6 +197,7 @@ button {
   background: var(--red-soft);
   color: var(--red);
   padding: 0 14px;
+  font-weight: 700;
 }
 
 .icon-button {
@@ -236,6 +297,19 @@ button {
   gap: 10px;
   flex-wrap: wrap;
   justify-content: flex-end;
+  align-items: center;
+}
+
+.user-chip {
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--muted);
+  padding: 0 12px;
+  font-size: 13px;
 }
 
 .eyebrow {
@@ -517,7 +591,7 @@ th {
 }
 
 .modal {
-  width: min(760px, 100%);
+  width: min(780px, 100%);
   max-height: 92vh;
   overflow: hidden;
   display: flex;
@@ -600,6 +674,12 @@ th {
   border-radius: 8px;
   padding: 14px;
   line-height: 1.7;
+}
+
+.user-table-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 @media (max-width: 1120px) {

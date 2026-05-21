@@ -1,0 +1,16 @@
+{
+  "name": "real-estate-ledger",
+  "version": "0.2.0",
+  "private": true,
+  "description": "房产中介经营记账本，支持 Vercel 部署、PostgreSQL 存储和用户管理。",
+  "scripts": {
+    "dev": "vercel dev",
+    "start": "vercel dev"
+  },
+  "dependencies": {
+    "pg": "^8.16.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

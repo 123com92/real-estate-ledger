@@ -1,4 +1,4 @@
-const STORAGE_KEY = "realEstateLedger.v1";
+const STORAGE_KEY = "realEstateLedger.v2";
 const MONEY_FORMATTER = new Intl.NumberFormat("zh-CN", {
   style: "currency",
   currency: "CNY",
@@ -6,6 +6,11 @@ const MONEY_FORMATTER = new Intl.NumberFormat("zh-CN", {
 });
 
 const today = () => new Date().toISOString().slice(0, 10);
+const addDays = (offset) => {
+  const date = new Date();
+  date.setDate(date.getDate() + offset);
+  return date.toISOString().slice(0, 10);
+};
 const daysBetween = (date) => {
   const base = new Date(today());
   const target = new Date(date);
@@ -32,7 +37,7 @@ const defaultState = () => ({
       name: "云上公馆",
       district: "城东片区",
       manager: "联合代理",
-      note: "新房源较多，需关注空置期。",
+      note: "新房源较多，需要关注空置期。",
     },
   ],
   properties: [
@@ -82,7 +87,7 @@ const defaultState = () => ({
       renovationDate: "2025-08-10",
       appliances: "中央空调、冰箱、洗衣机、电视",
       furniture: "三张床、餐桌、沙发、书柜",
-      note: "房租已逾期，需电话确认付款时间。",
+      note: "房租已逾期，需要电话确认付款时间。",
     },
   ],
   transactions: [
@@ -139,28 +144,21 @@ const defaultState = () => ({
   ],
 });
 
-function addDays(offset) {
-  const date = new Date();
-  date.setDate(date.getDate() + offset);
-  return date.toISOString().slice(0, 10);
-}
-
-let state = loadState();
-
-function loadState() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : defaultState();
-  } catch {
-    return defaultState();
-  }
-}
-
-function saveState() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-}
+let state = loadLocalState();
+let currentUser = null;
+let authMode = "login";
+let syncTimer = null;
 
 const els = {
+  authScreen: document.querySelector("#authScreen"),
+  appShell: document.querySelector("#appShell"),
+  authForm: document.querySelector("#authForm"),
+  authName: document.querySelector("#authName"),
+  authMessage: document.querySelector("#authMessage"),
+  loginTab: document.querySelector("#loginTab"),
+  registerTab: document.querySelector("#registerTab"),
+  currentUser: document.querySelector("#currentUser"),
+  userAdminBtn: document.querySelector("#userAdminBtn"),
   communityList: document.querySelector("#communityList"),
   communitySearch: document.querySelector("#communitySearch"),
   pageTitle: document.querySelector("#pageTitle"),
@@ -185,16 +183,135 @@ document.querySelector("#addPropertyBtn").addEventListener("click", () => openPr
 document.querySelector("#addTransactionBtn").addEventListener("click", () => openTransactionModal());
 document.querySelector("#closeModalBtn").addEventListener("click", closeModal);
 document.querySelector("#briefBtn").addEventListener("click", openBriefModal);
+document.querySelector("#syncBtn").addEventListener("click", () => syncNow(true));
+document.querySelector("#logoutBtn").addEventListener("click", logout);
 document.querySelector("#demoBtn").addEventListener("click", () => {
-  if (!confirm("导入示例会覆盖当前本地数据，确定继续吗？")) return;
+  if (!confirm("导入示例会覆盖当前账号的经营数据，确定继续吗？")) return;
   state = defaultState();
-  saveState();
   render();
+  syncNow(true);
 });
+els.userAdminBtn.addEventListener("click", openUserAdminModal);
 els.communitySearch.addEventListener("input", renderCommunities);
+els.loginTab.addEventListener("click", () => setAuthMode("login"));
+els.registerTab.addEventListener("click", () => setAuthMode("register"));
+els.authForm.addEventListener("submit", submitAuth);
 els.modalBackdrop.addEventListener("click", (event) => {
   if (event.target === els.modalBackdrop) closeModal();
 });
+
+setAuthMode("login");
+boot();
+
+async function boot() {
+  try {
+    const { user } = await api("/api/auth/me");
+    currentUser = user;
+    const payload = await api("/api/ledger");
+    state = normalizeState(payload.data || defaultState());
+    saveLocalState();
+    showApp();
+  } catch {
+    showAuth();
+  }
+}
+
+function showAuth() {
+  els.authScreen.hidden = false;
+  els.appShell.hidden = true;
+}
+
+function showApp() {
+  els.authScreen.hidden = true;
+  els.appShell.hidden = false;
+  els.currentUser.textContent = `${currentUser.name || currentUser.email} · ${currentUser.role === "admin" ? "管理员" : "成员"}`;
+  els.userAdminBtn.hidden = currentUser.role !== "admin";
+  render();
+}
+
+function setAuthMode(mode) {
+  authMode = mode;
+  els.loginTab.classList.toggle("active", mode === "login");
+  els.registerTab.classList.toggle("active", mode === "register");
+  els.authName.closest(".form-field").hidden = mode === "login";
+  els.authForm.querySelector(".auth-submit").textContent = mode === "login" ? "登录" : "注册并进入";
+  els.authMessage.textContent = "";
+}
+
+async function submitAuth(event) {
+  event.preventDefault();
+  els.authMessage.textContent = "";
+  const payload = Object.fromEntries(new FormData(els.authForm).entries());
+  try {
+    const { user } = await api(`/api/auth/${authMode}`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    currentUser = user;
+    const ledger = await api("/api/ledger");
+    state = normalizeState(ledger.data || defaultState());
+    saveLocalState();
+    showApp();
+  } catch (error) {
+    els.authMessage.textContent = error.message;
+  }
+}
+
+async function logout() {
+  await api("/api/auth/logout", { method: "POST" }).catch(() => {});
+  currentUser = null;
+  showAuth();
+}
+
+async function api(path, options = {}) {
+  const response = await fetch(path, {
+    credentials: "include",
+    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+    ...options,
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body.error || "请求失败，请稍后再试");
+  return body;
+}
+
+function loadLocalState() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return normalizeState(raw ? JSON.parse(raw) : defaultState());
+  } catch {
+    return defaultState();
+  }
+}
+
+function normalizeState(value) {
+  return {
+    selectedCommunityId: value?.selectedCommunityId || "all",
+    communities: Array.isArray(value?.communities) ? value.communities : [],
+    properties: Array.isArray(value?.properties) ? value.properties : [],
+    transactions: Array.isArray(value?.transactions) ? value.transactions : [],
+  };
+}
+
+function saveLocalState() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
+
+function scheduleSync() {
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(() => syncNow(false), 450);
+}
+
+async function syncNow(showNotice) {
+  try {
+    await api("/api/ledger", {
+      method: "PUT",
+      body: JSON.stringify({ data: state }),
+    });
+    if (showNotice) alert("数据已同步到 PostgreSQL");
+  } catch (error) {
+    if (showNotice) alert(error.message);
+  }
+}
 
 function selectedCommunity() {
   return state.communities.find((item) => item.id === state.selectedCommunityId);
@@ -230,7 +347,8 @@ function render() {
   renderTransactions();
   renderAlerts();
   renderOptimization();
-  saveState();
+  saveLocalState();
+  if (currentUser) scheduleSync();
 }
 
 function renderCommunities() {
@@ -243,23 +361,25 @@ function renderCommunities() {
       return [community.id, { ...stat, count }];
     }),
   );
-  const filtered = state.communities.filter((item) =>
-    `${item.name} ${item.district}`.toLowerCase().includes(query),
-  );
+  const filtered = state.communities.filter((item) => `${item.name} ${item.district}`.toLowerCase().includes(query));
   const allStat = totals(state.transactions);
   const allButton = communityButton({
     id: "all",
     name: "全部小区",
     district: `${state.communities.length} 个小区 · ${state.properties.length} 套房源 · ${money(allStat.profit)}`,
   });
-  els.communityList.innerHTML = allButton + filtered.map((item) => {
-    const stat = communityStats.get(item.id);
-    return communityButton({
-      id: item.id,
-      name: item.name,
-      district: `${item.district || "未填写片区"} · ${stat.count} 套 · ${money(stat.profit)}`,
-    });
-  }).join("");
+  els.communityList.innerHTML =
+    allButton +
+    filtered
+      .map((item) => {
+        const stat = communityStats.get(item.id);
+        return communityButton({
+          id: item.id,
+          name: item.name,
+          district: `${item.district || "未填写片区"} · ${stat.count} 套 · ${money(stat.profit)}`,
+        });
+      })
+      .join("");
   els.communityList.querySelectorAll("button").forEach((button) => {
     button.addEventListener("click", () => {
       state.selectedCommunityId = button.dataset.id;
@@ -354,15 +474,17 @@ function renderProperties() {
     button.addEventListener("click", () => {
       const property = state.properties.find((item) => item.id === button.dataset.id);
       if (button.dataset.action === "detail") openPropertyModal(property);
-      if (button.dataset.action === "quick-income") openTransactionModal({
-        communityId: property.communityId,
-        propertyId: property.id,
-        type: "income",
-        category: "租金收入",
-        amount: property.monthlyRent,
-        date: today(),
-        note: `${property.name} 收租`,
-      });
+      if (button.dataset.action === "quick-income") {
+        openTransactionModal({
+          communityId: property.communityId,
+          propertyId: property.id,
+          type: "income",
+          category: "租金收入",
+          amount: property.monthlyRent,
+          date: today(),
+          note: `${property.name} 收租`,
+        });
+      }
     });
   });
 }
@@ -467,7 +589,7 @@ function openCommunityModal(community = null) {
     <div class="form-grid">
       ${field("小区名称", "name", community?.name || "", "text", "full")}
       ${field("片区", "district", community?.district || "")}
-      ${field("负责人/合作方式", "manager", community?.manager || "")}
+      ${field("负责人 / 合作方式", "manager", community?.manager || "")}
       ${textArea("备注", "note", community?.note || "", "full")}
     </div>
     <div class="form-actions">
@@ -599,7 +721,7 @@ function openBriefModal() {
   const stat = totals();
   const vacant = scopedProperties().filter((item) => item.status === "vacant");
   const lines = [
-    `${today()} 每日汇总简报`,
+    `${today()} 每日经营简报`,
     "",
     `收入：${money(stat.income)}，成本：${money(stat.expense)}，净利润：${money(stat.profit)}。`,
     `当前范围共有 ${scopedProperties().length} 套房源，其中待出租 ${vacant.length} 套。`,
@@ -607,10 +729,10 @@ function openBriefModal() {
     alerts.length ? "待交房租提醒：" : "待交房租提醒：7 天内暂无到期房源。",
     ...alerts.map((property) => {
       const community = state.communities.find((item) => item.id === property.communityId);
-      return `- ${community?.name || ""} ${property.name}：${property.diff < 0 ? `逾期 ${Math.abs(property.diff)} 天` : `${property.diff} 天后到期`}，金额 ${money(property.monthlyRent)}，租客 ${property.tenant || "未填写"}`;
+      return `- ${community?.name || ""} ${property.name}，${property.diff < 0 ? `逾期 ${Math.abs(property.diff)} 天` : `${property.diff} 天后到期`}，金额 ${money(property.monthlyRent)}，租客 ${property.tenant || "未填写"}`;
     }),
   ];
-  els.modalTitle.textContent = "今日汇总简报";
+  els.modalTitle.textContent = "今日经营简报";
   els.modalForm.innerHTML = `
     <div class="brief-text">${escapeHtml(lines.join("\n"))}</div>
     <div class="form-actions">
@@ -627,6 +749,81 @@ function openBriefModal() {
   });
   bindCloseButtons();
   showModal();
+}
+
+async function openUserAdminModal() {
+  els.modalTitle.textContent = "用户管理";
+  els.modalForm.innerHTML = `<div class="empty-state">正在加载用户列表...</div>`;
+  showModal();
+  try {
+    const { users } = await api("/api/users");
+    els.modalForm.innerHTML = `
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>姓名</th>
+              <th>邮箱</th>
+              <th>角色</th>
+              <th>状态</th>
+              <th>创建时间</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${users
+              .map(
+                (user) => `
+                  <tr>
+                    <td>${escapeHtml(user.name || "-")}</td>
+                    <td>${escapeHtml(user.email)}</td>
+                    <td>${user.role === "admin" ? "管理员" : "成员"}</td>
+                    <td>${user.status === "active" ? "启用" : "停用"}</td>
+                    <td>${escapeHtml(new Date(user.created_at).toLocaleString("zh-CN"))}</td>
+                    <td>
+                      <div class="user-table-actions">
+                        <button class="secondary-button" type="button" data-role="${user.id}">${user.role === "admin" ? "设为成员" : "设为管理员"}</button>
+                        <button class="danger-button" type="button" data-status="${user.id}">${user.status === "active" ? "停用" : "启用"}</button>
+                      </div>
+                    </td>
+                  </tr>
+                `,
+              )
+              .join("")}
+          </tbody>
+        </table>
+      </div>
+      <div class="form-actions">
+        <span></span>
+        <div class="right">
+          <button class="secondary-button" type="button" data-close>关闭</button>
+        </div>
+      </div>
+    `;
+    els.modalForm.querySelectorAll("[data-role]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const target = users.find((user) => user.id === button.dataset.role);
+        await api(`/api/users/${target.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ role: target.role === "admin" ? "member" : "admin" }),
+        });
+        openUserAdminModal();
+      });
+    });
+    els.modalForm.querySelectorAll("[data-status]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const target = users.find((user) => user.id === button.dataset.status);
+        await api(`/api/users/${target.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ status: target.status === "active" ? "disabled" : "active" }),
+        });
+        openUserAdminModal();
+      });
+    });
+    bindCloseButtons();
+  } catch (error) {
+    els.modalForm.innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;
+  }
 }
 
 function normalizePropertyData(data) {
@@ -666,7 +863,10 @@ function selectField(label, name, options, value = "") {
       <label for="${name}">${label}</label>
       <select id="${name}" name="${name}">
         ${options
-          .map(([optionValue, text]) => `<option value="${escapeAttr(optionValue)}" ${String(optionValue) === String(value) ? "selected" : ""}>${escapeHtml(text)}</option>`)
+          .map(
+            ([optionValue, text]) =>
+              `<option value="${escapeAttr(optionValue)}" ${String(optionValue) === String(value) ? "selected" : ""}>${escapeHtml(text)}</option>`,
+          )
           .join("")}
       </select>
     </div>
@@ -700,5 +900,3 @@ function escapeHtml(value = "") {
 function escapeAttr(value = "") {
   return escapeHtml(value);
 }
-
-render();

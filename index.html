@@ -3,11 +3,45 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>个人房产中介记账本</title>
+    <title>房产中介经营记账本</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <div class="app-shell">
+    <section class="auth-screen" id="authScreen">
+      <div class="auth-panel">
+        <div class="brand compact-brand">
+          <div class="brand-mark">账</div>
+          <div>
+            <h1>房产中介经营记账本</h1>
+            <p>登录后同步小区、房源、流水和用户权限</p>
+          </div>
+        </div>
+
+        <div class="auth-tabs" role="tablist" aria-label="账号入口">
+          <button class="auth-tab active" id="loginTab" type="button">登录</button>
+          <button class="auth-tab" id="registerTab" type="button">注册</button>
+        </div>
+
+        <form class="auth-form" id="authForm">
+          <div class="form-field">
+            <label for="authName">姓名</label>
+            <input id="authName" name="name" autocomplete="name" placeholder="首次注册时填写" />
+          </div>
+          <div class="form-field">
+            <label for="authEmail">邮箱</label>
+            <input id="authEmail" name="email" type="email" autocomplete="email" required />
+          </div>
+          <div class="form-field">
+            <label for="authPassword">密码</label>
+            <input id="authPassword" name="password" type="password" autocomplete="current-password" minlength="8" required />
+          </div>
+          <button class="primary-button auth-submit" type="submit">登录</button>
+          <p class="form-message" id="authMessage"></p>
+        </form>
+      </div>
+    </section>
+
+    <div class="app-shell" id="appShell" hidden>
       <aside class="sidebar">
         <div class="brand">
           <div class="brand-mark">账</div>
@@ -37,8 +71,12 @@
             <h2 id="pageTitle">全部经营概览</h2>
           </div>
           <div class="topbar-actions">
+            <span class="user-chip" id="currentUser"></span>
+            <button class="ghost-button" id="userAdminBtn" type="button" hidden>用户管理</button>
+            <button class="ghost-button" id="syncBtn" type="button">同步数据</button>
             <button class="ghost-button" id="briefBtn" type="button">生成今日简报</button>
             <button class="ghost-button" id="demoBtn" type="button">导入示例</button>
+            <button class="danger-button" id="logoutBtn" type="button">退出</button>
           </div>
         </header>
 
