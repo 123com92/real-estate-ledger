@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>个人房产中介记账本</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">账</div>
+          <div>
+            <h1>房产记账本</h1>
+            <p>小区、房源、收支一体管理</p>
+          </div>
+        </div>
+
+        <button class="primary-action" id="addCommunityBtn" type="button">
+          <span>+</span>
+          新建小区
+        </button>
+
+        <div class="search-box">
+          <label for="communitySearch">搜索小区</label>
+          <input id="communitySearch" type="search" placeholder="小区名称 / 片区" />
+        </div>
+
+        <nav class="community-list" id="communityList" aria-label="小区列表"></nav>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">今日简报</p>
+            <h2 id="pageTitle">全部经营概览</h2>
+          </div>
+          <div class="topbar-actions">
+            <button class="ghost-button" id="briefBtn" type="button">生成今日简报</button>
+            <button class="ghost-button" id="demoBtn" type="button">导入示例</button>
+          </div>
+        </header>
+
+        <section class="kpi-grid" aria-label="核心指标">
+          <article class="kpi-card">
+            <span class="kpi-label">总收入</span>
+            <strong id="totalIncome">¥0</strong>
+            <small>租金、佣金及其他收入</small>
+          </article>
+          <article class="kpi-card">
+            <span class="kpi-label">总成本</span>
+            <strong id="totalExpense">¥0</strong>
+            <small>房租、装修、家电、维护等</small>
+          </article>
+          <article class="kpi-card accent">
+            <span class="kpi-label">净利润</span>
+            <strong id="netProfit">¥0</strong>
+            <small id="profitRate">利润率 0%</small>
+          </article>
+          <article class="kpi-card warning">
+            <span class="kpi-label">待提醒</span>
+            <strong id="alertCount">0 套</strong>
+            <small>7 天内到期或已逾期</small>
+          </article>
+        </section>
+
+        <section class="content-grid">
+          <div class="main-column">
+            <section class="panel">
+              <div class="panel-header">
+                <div>
+                  <p class="eyebrow">小区利润管理</p>
+                  <h3 id="communityHeading">全部小区</h3>
+                </div>
+                <button class="primary-button" id="addPropertyBtn" type="button">+ 添加房源</button>
+              </div>
+              <div class="community-summary" id="communitySummary"></div>
+              <div class="property-grid" id="propertyGrid"></div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-header">
+                <div>
+                  <p class="eyebrow">财务管理</p>
+                  <h3>收支流水</h3>
+                </div>
+                <button class="primary-button" id="addTransactionBtn" type="button">+ 记一笔</button>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>日期</th>
+                      <th>类型</th>
+                      <th>分类</th>
+                      <th>小区 / 房源</th>
+                      <th>金额</th>
+                      <th>备注</th>
+                    </tr>
+                  </thead>
+                  <tbody id="transactionTable"></tbody>
+                </table>
+              </div>
+            </section>
+          </div>
+
+          <aside class="side-column">
+            <section class="panel">
+              <div class="panel-header compact">
+                <div>
+                  <p class="eyebrow">预警提醒</p>
+                  <h3>房租到期</h3>
+                </div>
+              </div>
+              <div id="rentAlerts" class="alert-list"></div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-header compact">
+                <div>
+                  <p class="eyebrow">成本优化</p>
+                  <h3>经营建议</h3>
+                </div>
+              </div>
+              <div id="optimizationList" class="insight-list"></div>
+            </section>
+          </aside>
+        </section>
+      </main>
+    </div>
+
+    <div class="modal-backdrop" id="modalBackdrop" hidden>
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+        <div class="modal-header">
+          <h2 id="modalTitle"></h2>
+          <button class="icon-button" id="closeModalBtn" type="button" aria-label="关闭">×</button>
+        </div>
+        <form id="modalForm" class="modal-body"></form>
+      </div>
+    </div>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
