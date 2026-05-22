@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>房产中介经营记账本</title>
-    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./styles.css?v=0.2.1" />
   </head>
   <body>
     <section class="auth-screen" id="authScreen">
@@ -18,11 +18,11 @@
         </div>
 
         <div class="auth-tabs" role="tablist" aria-label="账号入口">
-          <button class="auth-tab active" id="loginTab" type="button">登录</button>
-          <button class="auth-tab" id="registerTab" type="button">注册</button>
+          <button class="auth-tab active" id="loginTab" type="button" onclick="window.setAuthMode('login')">登录</button>
+          <button class="auth-tab" id="registerTab" type="button" onclick="window.setAuthMode('register')">注册</button>
         </div>
 
-        <form class="auth-form" id="authForm">
+        <form class="auth-form" id="authForm" onsubmit="window.submitAuth(event)">
           <div class="form-field">
             <label for="authName">姓名</label>
             <input id="authName" name="name" autocomplete="name" placeholder="首次注册时填写" />
@@ -178,6 +178,6 @@
       </div>
     </div>
 
-    <script src="./app.js"></script>
+    <script src="./app.js?v=0.2.1"></script>
   </body>
 </html>

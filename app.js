@@ -196,10 +196,15 @@ els.communitySearch.addEventListener("input", renderCommunities);
 els.loginTab.addEventListener("click", () => setAuthMode("login"));
 els.registerTab.addEventListener("click", () => setAuthMode("register"));
 els.authForm.addEventListener("submit", submitAuth);
+els.loginTab.onclick = () => setAuthMode("login");
+els.registerTab.onclick = () => setAuthMode("register");
+els.authForm.onsubmit = submitAuth;
 els.modalBackdrop.addEventListener("click", (event) => {
   if (event.target === els.modalBackdrop) closeModal();
 });
 
+window.setAuthMode = setAuthMode;
+window.submitAuth = submitAuth;
 setAuthMode("login");
 boot();
 
@@ -241,6 +246,10 @@ function setAuthMode(mode) {
 async function submitAuth(event) {
   event.preventDefault();
   els.authMessage.textContent = "";
+  const submitButton = els.authForm.querySelector(".auth-submit");
+  const originalText = submitButton.textContent;
+  submitButton.disabled = true;
+  submitButton.textContent = authMode === "login" ? "正在登录..." : "正在注册...";
   const payload = Object.fromEntries(new FormData(els.authForm).entries());
   try {
     const { user } = await api(`/api/auth/${authMode}`, {
@@ -253,8 +262,41 @@ async function submitAuth(event) {
     saveLocalState();
     showApp();
   } catch (error) {
-    els.authMessage.textContent = error.message;
+    els.authMessage.textContent = authErrorMessage(error.message, authMode);
+  } finally {
+    submitButton.disabled = false;
+    submitButton.textContent = originalText;
   }
+}
+
+function authErrorMessage(message, mode) {
+  const text = String(message || "").trim();
+  const messages = {
+    "Email already registered": "这个邮箱已经注册，请直接登录或换一个邮箱。",
+    "Invalid email or password": "邮箱或密码不正确，请检查后再登录。",
+    "Invalid email or password shorter than 8 characters": "请填写有效邮箱，密码至少 8 位。",
+    "Account disabled": "账号已停用，请联系管理员。",
+    "Please sign in first": "请先登录后再继续操作。",
+    "Admin permission required": "当前账号没有管理员权限。",
+    "User not found": "用户不存在或已被删除。",
+  };
+  if (messages[text]) return messages[text];
+  if (text.includes("already registered") || text.includes("这个邮箱已经注册")) {
+    return "这个邮箱已经注册，请直接登录或换一个邮箱。";
+  }
+  if (text.includes("Invalid email or password") || text.includes("邮箱或密码不正确")) {
+    return "邮箱或密码不正确，请检查后再登录。";
+  }
+  if (text.includes("DATABASE_URL")) {
+    return "数据库还没有配置，暂时无法完成登录或注册。";
+  }
+  if (text.includes("SESSION_SECRET")) {
+    return "服务端会话密钥未配置，请先补充环境变量。";
+  }
+  if (text.includes("timeout") || text.includes("Failed to fetch") || text.includes("Load failed")) {
+    return "服务暂时没有响应，请确认本地服务已启动后重试。";
+  }
+  return mode === "register" ? "注册失败，请检查信息后重试。" : "登录失败，请检查信息后重试。";
 }
 
 async function logout() {
@@ -264,11 +306,14 @@ async function logout() {
 }
 
 async function api(path, options = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new Error("request timeout")), 8000);
   const response = await fetch(path, {
     credentials: "include",
     headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+    signal: controller.signal,
     ...options,
-  });
+  }).finally(() => clearTimeout(timer));
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(body.error || "请求失败，请稍后再试");
   return body;
