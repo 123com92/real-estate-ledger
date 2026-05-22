@@ -206,6 +206,18 @@ els.communitySearch.addEventListener("input", renderCommunities);
 els.loginTab.addEventListener("click", () => setAuthMode("login"));
 els.registerTab.addEventListener("click", () => setAuthMode("register"));
 els.authForm.addEventListener("submit", submitAuth);
+els.communitySummary.addEventListener("click", (event) => {
+  const summaryButton = event.target.closest("[data-summary]");
+  if (!summaryButton) return;
+  openSummaryDetailModal(summaryButton.dataset.summary);
+});
+els.communitySummary.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  const summaryButton = event.target.closest("[data-summary]");
+  if (!summaryButton) return;
+  event.preventDefault();
+  openSummaryDetailModal(summaryButton.dataset.summary);
+});
 els.loginTab.onclick = () => setAuthMode("login");
 els.registerTab.onclick = () => setAuthMode("register");
 els.authForm.onsubmit = submitAuth;
@@ -519,12 +531,9 @@ function renderProperties() {
   ]
     .map(
       ([type, label, value]) =>
-        `<button class="summary-chip" type="button" data-summary="${type}" onclick="window.openSummaryDetailModal('${type}')" title="点击查看${label}明细"><span>${label}</span><strong>${value}</strong></button>`,
+        `<button class="summary-chip" type="button" data-summary="${type}" title="点击查看${label}明细" aria-label="查看${label}明细"><span>${label}</span><strong>${value}</strong></button>`,
     )
     .join("");
-  els.communitySummary.querySelectorAll("[data-summary]").forEach((button) => {
-    button.addEventListener("click", () => openSummaryDetailModal(button.dataset.summary));
-  });
 
   if (!properties.length) {
     els.propertyGrid.innerHTML = `<div class="empty-state">当前小区还没有房源，点击“添加房源”开始记录。</div>`;
