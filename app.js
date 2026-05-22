@@ -428,13 +428,21 @@ function renderCommunities() {
           id: item.id,
           name: item.name,
           district: `${item.district || "未填写片区"} · ${stat.count} 套 · ${money(stat.profit)}`,
+          editable: true,
         });
       })
       .join("");
-  els.communityList.querySelectorAll("button").forEach((button) => {
+  els.communityList.querySelectorAll(".community-item").forEach((button) => {
     button.addEventListener("click", () => {
       state.selectedCommunityId = button.dataset.id;
       render();
+    });
+  });
+  els.communityList.querySelectorAll(".community-edit-button").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const community = state.communities.find((item) => item.id === button.dataset.id);
+      if (community) openCommunityModal(community);
     });
   });
 }
@@ -445,6 +453,11 @@ function communityButton(item) {
     <button class="community-item ${active}" type="button" data-id="${item.id}">
       <strong>${escapeHtml(item.name)}</strong>
       <span>${escapeHtml(item.district)}</span>
+      ${
+        item.editable
+          ? `<span class="community-edit-button" role="button" tabindex="0" title="编辑小区" aria-label="编辑小区" data-id="${item.id}">编辑</span>`
+          : ""
+      }
     </button>
   `;
 }
@@ -471,11 +484,6 @@ function renderProperties() {
   const stat = totals();
   const rented = properties.filter((item) => item.status === "rented").length;
   const vacant = properties.filter((item) => item.status === "vacant").length;
-  const community = selectedCommunity();
-  const communityActions =
-    community && state.selectedCommunityId !== "all"
-      ? `<div class="community-tools"><button class="secondary-button" id="editCommunityBtn" type="button">编辑小区</button></div>`
-      : "";
   els.communitySummary.innerHTML = [
     ["房源数量", `${properties.length} 套`],
     ["已出租", `${rented} 套`],
@@ -483,8 +491,7 @@ function renderProperties() {
     ["净利润", money(stat.profit)],
   ]
     .map(([label, value]) => `<div class="summary-chip"><span>${label}</span><strong>${value}</strong></div>`)
-    .join("") + communityActions;
-  document.querySelector("#editCommunityBtn")?.addEventListener("click", () => openCommunityModal(community));
+    .join("");
 
   if (!properties.length) {
     els.propertyGrid.innerHTML = `<div class="empty-state">当前小区还没有房源，点击“添加房源”开始记录。</div>`;
