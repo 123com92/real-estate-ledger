@@ -4,6 +4,10 @@ const MONEY_FORMATTER = new Intl.NumberFormat("zh-CN", {
   currency: "CNY",
   maximumFractionDigits: 0,
 });
+const TRANSACTION_CATEGORIES = {
+  income: ["租金收入", "押金收入", "管理费收入", "水电费代收", "维修费代收", "其他收入"],
+  expense: ["房东租金", "水电费支出", "物业费支出", "家电支出", "家具支出", "维修支出", "装修维护", "保洁支出", "中介费支出", "其他成本"],
+};
 
 const today = () => new Date().toISOString().slice(0, 10);
 const addDays = (offset) => {
@@ -835,22 +839,37 @@ function openTransactionModal(seed = {}) {
   const propertyOptions = state.properties
     .filter((item) => item.communityId === communityId)
     .map((item) => [item.id, item.name]);
+  const selectedProperty = state.properties.find((item) => item.id === seed.propertyId);
+  const propertySearchValue = selectedProperty ? selectedProperty.name : "";
+  const typeValue = seed.type || "income";
+  const categoryValue = seed.category || TRANSACTION_CATEGORIES[typeValue][0];
   els.modalTitle.textContent = "新增收支流水";
   els.modalForm.innerHTML = `
     <div class="form-grid">
-      ${selectField("类型", "type", [["income", "收入"], ["expense", "成本"]], seed.type || "income")}
-      ${field("分类", "category", seed.category || "租金收入")}
+      ${selectField("类型", "type", [["income", "收入"], ["expense", "成本"]], typeValue)}
+      ${field("分类", "category", categoryValue, "text", "", "transactionCategoryOptions")}
       ${selectField("所属小区", "communityId", state.communities.map((item) => [item.id, item.name]), communityId)}
-      ${selectField("关联房源", "propertyId", [["", "不关联"], ...propertyOptions], seed.propertyId || "")}
+      <div class="form-field">
+        <label for="propertySearch">关联房源</label>
+        <input id="propertySearch" name="propertySearch" list="propertyOptions" value="${escapeAttr(propertySearchValue)}" placeholder="输入房源名快速查找，不关联可留空" autocomplete="off" />
+        <input id="propertyId" name="propertyId" type="hidden" value="${escapeAttr(seed.propertyId || "")}" />
+        <datalist id="propertyOptions">
+          ${propertyOptions.map(([optionValue, text]) => `<option value="${escapeAttr(text)}" data-id="${escapeAttr(optionValue)}"></option>`).join("")}
+        </datalist>
+      </div>
       ${field("金额", "amount", seed.amount || "", "number")}
       ${field("日期", "date", seed.date || today(), "date")}
       ${textArea("备注", "note", seed.note || "", "full")}
     </div>
+    <datalist id="transactionCategoryOptions">
+      ${TRANSACTION_CATEGORIES[typeValue].map((item) => `<option value="${escapeAttr(item)}"></option>`).join("")}
+    </datalist>
     <div class="form-actions">
       <span></span>
       <div class="right">
         <button class="secondary-button" type="button" data-close>取消</button>
-        <button class="primary-button" type="submit">保存</button>
+        <button class="secondary-button" type="submit" name="submitAction" value="save-add" title="保存这一笔，然后清空金额和备注，继续录入下一笔。">保存并新增</button>
+        <button class="primary-button" type="submit" name="submitAction" value="save">保存</button>
       </div>
     </div>
   `;
@@ -860,12 +879,28 @@ function openTransactionModal(seed = {}) {
     openTransactionModal({ ...current, communityId: communitySelect.value, propertyId: "" });
   });
   const typeSelect = els.modalForm.querySelector('[name="type"]');
-  const propertySelect = els.modalForm.querySelector('[name="propertyId"]');
+  const propertySearch = els.modalForm.querySelector('[name="propertySearch"]');
+  const propertyIdInput = els.modalForm.querySelector('[name="propertyId"]');
   const categoryInput = els.modalForm.querySelector('[name="category"]');
   const amountInput = els.modalForm.querySelector('[name="amount"]');
   const dateInput = els.modalForm.querySelector('[name="date"]');
+  const resolvePropertyId = () => {
+    const matched = state.properties.find(
+      (item) => item.communityId === communitySelect.value && item.name === propertySearch.value.trim(),
+    );
+    propertyIdInput.value = matched ? matched.id : "";
+    return matched;
+  };
+  const refreshCategories = () => {
+    const options = TRANSACTION_CATEGORIES[typeSelect.value];
+    document.querySelector("#transactionCategoryOptions").innerHTML = options
+      .map((item) => `<option value="${escapeAttr(item)}"></option>`)
+      .join("");
+    if (!categoryInput.value || !TRANSACTION_CATEGORIES.income.includes(categoryInput.value) && !TRANSACTION_CATEGORIES.expense.includes(categoryInput.value)) return;
+    categoryInput.value = options[0];
+  };
   const syncRentDueDate = () => {
-    const property = state.properties.find((item) => item.id === propertySelect.value);
+    const property = resolvePropertyId();
     const amount = Number(amountInput.value || 0);
     const monthlyRent = Number(property?.monthlyRent || 0);
     const isRentIncome =
@@ -877,13 +912,19 @@ function openTransactionModal(seed = {}) {
     const monthsPaid = Math.max(1, Math.floor(amount / monthlyRent + 0.000001));
     dateInput.value = addMonths(property.rentDueDate || today(), monthsPaid);
   };
-  [typeSelect, propertySelect, categoryInput, amountInput].forEach((input) => {
+  typeSelect.addEventListener("change", () => {
+    refreshCategories();
+    syncRentDueDate();
+  });
+  [propertySearch, categoryInput, amountInput].forEach((input) => {
     input.addEventListener("input", syncRentDueDate);
     input.addEventListener("change", syncRentDueDate);
   });
   syncRentDueDate();
   els.modalForm.onsubmit = (event) => {
     event.preventDefault();
+    const submitAction = event.submitter?.value || "save";
+    resolvePropertyId();
     const data = formData();
     if (!data.amount || Number(data.amount) <= 0) return alert("请填写有效金额");
     const property = state.properties.find((item) => item.id === data.propertyId);
@@ -906,6 +947,19 @@ function openTransactionModal(seed = {}) {
       propertyName: property?.name || "",
       amount: Number(data.amount),
     });
+    if (submitAction === "save-add") {
+      render();
+      openTransactionModal({
+        type: data.type,
+        category: data.category,
+        communityId: data.communityId,
+        propertyId: data.propertyId,
+        amount: "",
+        date: today(),
+        note: "",
+      });
+      return;
+    }
     closeModal();
     render();
   };
@@ -1371,11 +1425,11 @@ function formData() {
   return Object.fromEntries(new FormData(els.modalForm).entries());
 }
 
-function field(label, name, value = "", type = "text", wide = "") {
+function field(label, name, value = "", type = "text", wide = "", list = "") {
   return `
     <div class="form-field ${wide}">
       <label for="${name}">${label}</label>
-      <input id="${name}" name="${name}" type="${type}" value="${escapeAttr(value)}" />
+      <input id="${name}" name="${name}" type="${type}" value="${escapeAttr(value)}" ${list ? `list="${escapeAttr(list)}"` : ""} />
     </div>
   `;
 }
