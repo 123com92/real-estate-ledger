@@ -194,6 +194,7 @@ document.querySelector("#addTransactionBtn").addEventListener("click", () => ope
 document.querySelector("#closeModalBtn").addEventListener("click", closeModal);
 document.querySelector("#briefBtn").addEventListener("click", openBriefModal);
 document.querySelector("#syncBtn").addEventListener("click", () => syncNow(true));
+document.querySelector("#exportFinanceBtn").addEventListener("click", openFinanceExportModal);
 document.querySelector("#logoutBtn").addEventListener("click", logout);
 document.querySelector("#demoBtn").addEventListener("click", () => {
   if (!confirm("导入示例会覆盖当前账号的经营数据，确定继续吗？")) return;
@@ -837,6 +838,132 @@ function openBriefModal() {
   });
   bindCloseButtons();
   showModal();
+}
+
+function openFinanceExportModal() {
+  const dates = state.transactions.map((item) => item.date).filter(Boolean).sort();
+  const start = dates[0] || today();
+  const end = dates[dates.length - 1] || today();
+  els.modalTitle.textContent = "财务数据导出";
+  els.modalForm.innerHTML = `
+    <div class="form-grid">
+      ${field("开始日期", "startDate", start, "date")}
+      ${field("结束日期", "endDate", end, "date")}
+    </div>
+    <div class="empty-state">将按日期范围导出当前账号的收支流水，文件可用 Excel 直接打开。</div>
+    <div class="form-actions">
+      <span></span>
+      <div class="right">
+        <button class="secondary-button" type="button" data-close>取消</button>
+        <button class="primary-button" type="submit">导出 Excel</button>
+      </div>
+    </div>
+  `;
+  els.modalForm.onsubmit = (event) => {
+    event.preventDefault();
+    const { startDate, endDate } = formData();
+    if (!startDate || !endDate) return alert("请选择开始日期和结束日期");
+    if (startDate > endDate) return alert("开始日期不能晚于结束日期");
+    exportFinanceExcel(startDate, endDate);
+    closeModal();
+  };
+  bindCloseButtons();
+  showModal();
+}
+
+function exportFinanceExcel(startDate, endDate) {
+  const rows = state.transactions
+    .filter((item) => item.date >= startDate && item.date <= endDate)
+    .slice()
+    .sort(byDateDesc)
+    .map((item) => {
+      const community = state.communities.find((communityItem) => communityItem.id === item.communityId);
+      const property = state.properties.find((propertyItem) => propertyItem.id === item.propertyId);
+      return {
+        date: item.date,
+        type: item.type === "income" ? "收入" : "成本",
+        category: item.category || "",
+        community: community?.name || "",
+        property: property?.name || "",
+        amount: Number(item.amount || 0),
+        signedAmount: item.type === "income" ? Number(item.amount || 0) : -Number(item.amount || 0),
+        note: item.note || "",
+      };
+    });
+  if (!rows.length) {
+    alert("所选日期范围内没有可导出的财务流水");
+    return;
+  }
+  const income = rows.filter((item) => item.signedAmount > 0).reduce((sum, item) => sum + item.amount, 0);
+  const expense = rows.filter((item) => item.signedAmount < 0).reduce((sum, item) => sum + item.amount, 0);
+  const tableRows = rows
+    .map(
+      (item) => `
+        <tr>
+          <td>${excelCell(item.date)}</td>
+          <td>${excelCell(item.type)}</td>
+          <td>${excelCell(item.category)}</td>
+          <td>${excelCell(item.community)}</td>
+          <td>${excelCell(item.property)}</td>
+          <td style="mso-number-format:'0.00';">${item.amount}</td>
+          <td style="mso-number-format:'0.00';">${item.signedAmount}</td>
+          <td>${excelCell(item.note)}</td>
+        </tr>
+      `,
+    )
+    .join("");
+  const html = `
+    <html>
+      <head>
+        <meta charset="UTF-8" />
+        <style>
+          table { border-collapse: collapse; font-family: "Microsoft YaHei", Arial, sans-serif; }
+          th { background: #207a5c; color: #ffffff; font-weight: 700; }
+          th, td { border: 1px solid #b7c5c0; padding: 8px 10px; }
+          .summary th { background: #d8b15f; color: #16201f; }
+        </style>
+      </head>
+      <body>
+        <table class="summary">
+          <tr><th colspan="2">房产中介经营记账本 - 财务数据导出</th></tr>
+          <tr><td>开始日期</td><td>${excelCell(startDate)}</td></tr>
+          <tr><td>结束日期</td><td>${excelCell(endDate)}</td></tr>
+          <tr><td>收入合计</td><td>${income}</td></tr>
+          <tr><td>成本合计</td><td>${expense}</td></tr>
+          <tr><td>净额</td><td>${income - expense}</td></tr>
+        </table>
+        <br />
+        <table>
+          <thead>
+            <tr>
+              <th>日期</th>
+              <th>类型</th>
+              <th>分类</th>
+              <th>小区</th>
+              <th>房源</th>
+              <th>金额</th>
+              <th>收入/成本净额</th>
+              <th>备注</th>
+            </tr>
+          </thead>
+          <tbody>${tableRows}</tbody>
+        </table>
+      </body>
+    </html>
+  `;
+  const blob = new Blob([html], { type: "application/vnd.ms-excel;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `财务数据_${startDate}_${endDate}.xls`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function excelCell(value = "") {
+  return escapeHtml(value).replace(/\n/g, "<br />");
 }
 
 async function openUserAdminModal() {
