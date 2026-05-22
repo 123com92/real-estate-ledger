@@ -598,6 +598,22 @@ th {
   font-weight: 800;
 }
 
+.positive {
+  color: var(--green);
+  font-weight: 800;
+}
+
+.negative {
+  color: var(--red);
+  font-weight: 800;
+}
+
+.detail-table {
+  margin-bottom: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
 .alert-list,
 .insight-list {
   display: grid;

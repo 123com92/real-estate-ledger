@@ -5,8 +5,40 @@ const MONEY_FORMATTER = new Intl.NumberFormat("zh-CN", {
   maximumFractionDigits: 0,
 });
 const TRANSACTION_CATEGORIES = {
-  income: ["租金收入", "押金收入", "管理费收入", "水电费代收", "维修费代收", "其他收入"],
-  expense: ["房东租金", "水电费支出", "物业费支出", "家电支出", "家具支出", "维修支出", "装修维护", "保洁支出", "中介费支出", "其他成本"],
+  income: [
+    "房租",
+    "中介费",
+    "水费",
+    "电费",
+    "燃气费",
+    "物业费",
+    "宽带费",
+    "停车费",
+    "保洁费",
+    "维修费",
+    "家电赔付",
+    "押金",
+    "管理费",
+    "违约金",
+    "其他收入",
+  ],
+  expense: [
+    "房东租金",
+    "中介费",
+    "水费",
+    "电费",
+    "燃气费",
+    "物业费",
+    "宽带费",
+    "停车费",
+    "保洁费",
+    "维修费",
+    "家电支出",
+    "家具支出",
+    "装修维护",
+    "押金退还",
+    "其他成本",
+  ],
 };
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -585,7 +617,7 @@ function renderProperties() {
           communityId: property.communityId,
           propertyId: property.id,
           type: "income",
-          category: "租金收入",
+          category: "房租",
           amount: property.monthlyRent,
           date: today(),
           note: `${property.name} 收租`,
@@ -1037,6 +1069,7 @@ function openSummaryDetailModal(type) {
         <div class="summary-chip static"><span>净利润</span><strong>${money(stat.profit)}</strong></div>
         <div class="summary-chip static"><span>流水数量</span><strong>${transactions.length} 条</strong></div>
       </div>
+      ${categoryProfitTable(transactions)}
       ${transactionDetailTable(transactions)}
       <div class="form-actions">
         <span></span>
@@ -1093,6 +1126,49 @@ function propertyDetailCard(property) {
       <p>月租 ${money(property.monthlyRent)} · 房东成本 ${money(property.landlordRent)}</p>
       <p>租客 ${escapeHtml(property.tenant || "未填写")}</p>
     </article>
+  `;
+}
+
+function categoryProfitTable(transactions) {
+  if (!transactions.length) return "";
+  const rows = Object.values(
+    transactions.reduce((map, item) => {
+      const category = item.category || "未分类";
+      if (!map[category]) map[category] = { category, income: 0, expense: 0 };
+      map[category][item.type === "income" ? "income" : "expense"] += Number(item.amount || 0);
+      return map;
+    }, {}),
+  )
+    .map((item) => ({ ...item, profit: item.income - item.expense }))
+    .sort((a, b) => Math.abs(b.profit) - Math.abs(a.profit));
+
+  return `
+    <div class="table-wrap detail-table">
+      <table>
+        <thead>
+          <tr>
+            <th>分类</th>
+            <th>收入</th>
+            <th>成本</th>
+            <th>利润</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows
+            .map(
+              (item) => `
+                <tr>
+                  <td>${escapeHtml(item.category)}</td>
+                  <td>${money(item.income)}</td>
+                  <td>${money(item.expense)}</td>
+                  <td class="${item.profit < 0 ? "negative" : "positive"}">${money(item.profit)}</td>
+                </tr>
+              `,
+            )
+            .join("")}
+        </tbody>
+      </table>
+    </div>
   `;
 }
 
