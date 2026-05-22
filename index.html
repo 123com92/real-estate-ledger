@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>房产中介经营记账本</title>
-    <link rel="stylesheet" href="./styles.css?v=0.2.13" />
+    <link rel="stylesheet" href="./styles.css?v=0.2.14" />
   </head>
   <body>
     <section class="auth-screen" id="authScreen">
@@ -126,36 +126,38 @@
                 </div>
                 <button class="primary-button" id="addTransactionBtn" type="button">+ 记一笔</button>
               </div>
-              <div class="transaction-filters" id="transactionFilters">
-                <div class="filter-field">
-                  <label for="transactionStartDate">开始日期</label>
-                  <input id="transactionStartDate" type="date" />
+              <div class="transaction-filter-box">
+                <div class="transaction-filters" id="transactionFilters">
+                  <div class="filter-field">
+                    <label for="transactionStartDate">开始日期</label>
+                    <input id="transactionStartDate" type="date" />
+                  </div>
+                  <div class="filter-field">
+                    <label for="transactionEndDate">结束日期</label>
+                    <input id="transactionEndDate" type="date" />
+                  </div>
+                  <div class="filter-field">
+                    <label for="transactionTypeFilter">类型</label>
+                    <select id="transactionTypeFilter">
+                      <option value="">全部</option>
+                      <option value="income">收入</option>
+                      <option value="expense">成本</option>
+                    </select>
+                  </div>
+                  <div class="filter-field">
+                    <label for="transactionCategoryFilter">分类</label>
+                    <select id="transactionCategoryFilter">
+                      <option value="">全部分类</option>
+                    </select>
+                  </div>
+                  <div class="filter-field wide">
+                    <label for="transactionKeyword">房源 / 小区 / 备注</label>
+                    <input id="transactionKeyword" type="search" placeholder="搜索房源、小区、分类或备注" />
+                  </div>
+                  <button class="secondary-button filter-clear-button" id="clearTransactionFilters" type="button">清空</button>
                 </div>
-                <div class="filter-field">
-                  <label for="transactionEndDate">结束日期</label>
-                  <input id="transactionEndDate" type="date" />
-                </div>
-                <div class="filter-field">
-                  <label for="transactionTypeFilter">类型</label>
-                  <select id="transactionTypeFilter">
-                    <option value="">全部</option>
-                    <option value="income">收入</option>
-                    <option value="expense">成本</option>
-                  </select>
-                </div>
-                <div class="filter-field">
-                  <label for="transactionCategoryFilter">分类</label>
-                  <select id="transactionCategoryFilter">
-                    <option value="">全部分类</option>
-                  </select>
-                </div>
-                <div class="filter-field wide">
-                  <label for="transactionKeyword">房源 / 小区 / 备注</label>
-                  <input id="transactionKeyword" type="search" placeholder="输入房源名、日期备注或分类" />
-                </div>
-                <button class="secondary-button" id="clearTransactionFilters" type="button">清空筛选</button>
+                <div class="filter-summary" id="transactionFilterSummary"></div>
               </div>
-              <div class="filter-summary" id="transactionFilterSummary"></div>
               <div class="table-wrap">
                 <table>
                   <thead>

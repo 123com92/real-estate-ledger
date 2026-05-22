@@ -568,11 +568,18 @@ button {
   overflow-x: auto;
 }
 
+.transaction-filter-box {
+  background: #f7faf7;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 14px;
+}
+
 .transaction-filters {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
-  margin-bottom: 10px;
   align-items: end;
 }
 
@@ -591,8 +598,30 @@ button {
   font-weight: 700;
 }
 
+.filter-field input,
+.filter-field select {
+  background: #fff;
+  min-height: 38px;
+}
+
+.filter-clear-button {
+  grid-column: 1 / -1;
+  justify-self: end;
+  min-width: 82px;
+  height: 38px;
+  padding: 0 14px;
+  white-space: nowrap;
+}
+
 .filter-summary {
-  margin-bottom: 10px;
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  margin-top: 10px;
+  border-radius: 8px;
+  background: #fff;
+  border: 1px solid rgba(34, 126, 94, 0.14);
+  padding: 0 10px;
   color: var(--muted);
   font-size: 13px;
 }
@@ -808,9 +837,6 @@ th {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .transaction-filters {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
 }
 
 @media (max-width: 760px) {
@@ -847,6 +873,11 @@ th {
 
   .filter-field.wide {
     grid-column: auto;
+  }
+
+  .filter-clear-button {
+    justify-self: stretch;
+    width: 100%;
   }
 
   .modal-backdrop {
