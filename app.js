@@ -267,9 +267,6 @@ els.communitySummary.addEventListener("keydown", (event) => {
   event.preventDefault();
   openSummaryDetailModal(summaryButton.dataset.summary);
 });
-els.loginTab.onclick = () => setAuthMode("login");
-els.registerTab.onclick = () => setAuthMode("register");
-els.authForm.onsubmit = submitAuth;
 els.modalBackdrop.addEventListener("click", (event) => {
   if (event.target === els.modalBackdrop) closeModal();
 });
@@ -319,12 +316,14 @@ async function submitAuth(event) {
   event.preventDefault();
   els.authMessage.textContent = "";
   const submitButton = els.authForm.querySelector(".auth-submit");
-  const originalText = submitButton.textContent;
+  if (submitButton.disabled) return;
+  const mode = authMode;
+  const originalText = mode === "login" ? "登录" : "注册并进入";
   submitButton.disabled = true;
-  submitButton.textContent = authMode === "login" ? "正在登录..." : "正在注册...";
+  submitButton.textContent = mode === "login" ? "正在登录..." : "正在注册...";
   const payload = Object.fromEntries(new FormData(els.authForm).entries());
   try {
-    const { user } = await api(`/api/auth/${authMode}`, {
+    const { user } = await api(`/api/auth/${mode}`, {
       method: "POST",
       body: JSON.stringify(payload),
     });
@@ -334,7 +333,7 @@ async function submitAuth(event) {
     saveLocalState();
     showApp();
   } catch (error) {
-    els.authMessage.textContent = authErrorMessage(error.message, authMode);
+    els.authMessage.textContent = authErrorMessage(error.message, mode);
   } finally {
     submitButton.disabled = false;
     submitButton.textContent = originalText;

@@ -18,11 +18,11 @@
         </div>
 
         <div class="auth-tabs" role="tablist" aria-label="账号入口">
-          <button class="auth-tab active" id="loginTab" type="button" onclick="window.setAuthMode('login')">登录</button>
-          <button class="auth-tab" id="registerTab" type="button" onclick="window.setAuthMode('register')">注册</button>
+          <button class="auth-tab active" id="loginTab" type="button">登录</button>
+          <button class="auth-tab" id="registerTab" type="button">注册</button>
         </div>
 
-        <form class="auth-form" id="authForm" onsubmit="window.submitAuth(event)">
+        <form class="auth-form" id="authForm">
           <div class="form-field">
             <label for="authName">姓名</label>
             <input id="authName" name="name" autocomplete="name" placeholder="首次注册时填写" />
@@ -211,6 +211,6 @@
       </div>
     </div>
 
-    <script src="./app.js?v=0.2.16"></script>
+    <script src="./app.js?v=0.2.17"></script>
   </body>
 </html>
