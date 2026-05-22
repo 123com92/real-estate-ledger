@@ -806,7 +806,19 @@ function openPropertyModal(property = null) {
   const deleteBtn = els.modalForm.querySelector("[data-delete-property]");
   if (deleteBtn) {
     deleteBtn.addEventListener("click", () => {
-      if (!confirm("确定删除这个房源吗？关联流水会保留，但房源名称将无法匹配。")) return;
+      if (!confirm("确定删除这个房源吗？相关收支流水会保留为历史财务记录。")) return;
+      const community = state.communities.find((item) => item.id === property.communityId);
+      state.transactions = state.transactions.map((item) => {
+        if (item.propertyId !== property.id) return item;
+        return {
+          ...item,
+          communitySnapshotId: item.communitySnapshotId || property.communityId,
+          propertySnapshotId: item.propertySnapshotId || property.id,
+          communityName: item.communityName || community?.name || "",
+          propertyName: item.propertyName || property.name,
+          propertyId: "",
+        };
+      });
       state.properties = state.properties.filter((item) => item.id !== property.id);
       closeModal();
       render();
