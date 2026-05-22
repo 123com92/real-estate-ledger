@@ -2,18 +2,53 @@
   "name": "real-estate-ledger",
   "version": "0.2.0",
   "private": true,
+  "main": "desktop/main.js",
   "description": "房产中介经营记账本，支持 Vercel 部署、PostgreSQL 存储和用户管理。",
   "scripts": {
     "dev": "vercel dev",
     "start": "vercel dev",
+    "desktop": "electron .",
+    "desktop:rebuild": "electron-builder install-app-deps",
+    "desktop:dist": "electron-builder --win",
     "license:keygen": "node tools/license/generate-keypair.js",
     "license:create": "node tools/license/create-license.js",
     "license:verify": "node tools/license/verify-license.js"
   },
   "dependencies": {
+    "better-sqlite3": "^11.9.1",
     "pg": "^8.16.0"
+  },
+  "devDependencies": {
+    "electron": "^35.2.0",
+    "electron-builder": "^26.0.12"
   },
   "engines": {
     "node": ">=20"
+  },
+  "build": {
+    "appId": "com.realestate.ledger",
+    "productName": "房产记账本",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "index.html",
+      "app.js",
+      "styles.css",
+      "desktop/**/*",
+      "tools/license/license-core.js",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
   }
 }

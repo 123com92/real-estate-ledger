@@ -86,6 +86,22 @@ http://localhost:5177/?standalone=1
 
 单机模式会跳过云端登录，数据先保存到本机浏览器存储，并显示“授权信息”入口。未授权时按试用版限制使用，输入有效授权码后解除限制。
 
+桌面版使用 Electron + SQLite。安装依赖后可以本地启动：
+
+```powershell
+npm install
+npm run desktop:rebuild
+npm run desktop
+```
+
+打包 Windows 安装包：
+
+```powershell
+npm run desktop:dist
+```
+
+桌面版数据文件会放在系统用户数据目录下的 `data/ledger.sqlite`，不是浏览器 `localStorage`。后续升级版本会继续读取同一个 SQLite 文件。
+
 工具位置：
 
 ```text

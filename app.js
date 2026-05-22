@@ -1,8 +1,9 @@
 const STORAGE_KEY = "realEstateLedger.v2";
 const LICENSE_STORAGE_KEY = "realEstateLedger.license.v1";
 const MACHINE_CODE_KEY = "realEstateLedger.machineCode.v1";
+const DESKTOP_MODE = Boolean(window.desktopApp);
 const STANDALONE_MODE =
-  new URLSearchParams(window.location.search).get("standalone") === "1" || window.location.protocol === "file:";
+  DESKTOP_MODE || new URLSearchParams(window.location.search).get("standalone") === "1" || window.location.protocol === "file:";
 const TRIAL_LIMITS = { communities: 2, properties: 10, transactions: 30 };
 const PRODUCT_PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
 MCowBQYDK2VwAyEAs8DBFmDQpTV4AvpBYFUfkcqSBejpcyUsxExj0/NN0kY=
@@ -203,6 +204,7 @@ let currentUser = null;
 let authMode = "login";
 let syncTimer = null;
 let activeLicense = null;
+let machineCodeCache = "";
 let transactionFilters = {
   startDate: "",
   endDate: "",
@@ -290,9 +292,12 @@ boot();
 
 async function boot() {
   if (STANDALONE_MODE) {
+    if (DESKTOP_MODE) {
+      machineCodeCache = await window.desktopApp.getMachineCode();
+      state = normalizeState((await window.desktopApp.loadState()) || loadLocalState());
+    }
     activeLicense = await loadVerifiedLicense();
     currentUser = standaloneUser();
-    state = normalizeState(loadLocalState());
     showApp();
     if (!licenseStatus().ok) openLicenseModal();
     return;
@@ -424,6 +429,7 @@ function standaloneUser() {
 }
 
 function getMachineCode() {
+  if (machineCodeCache) return machineCodeCache;
   let code = localStorage.getItem(MACHINE_CODE_KEY);
   if (!code) {
     const bytes = new Uint8Array(10);
@@ -434,6 +440,7 @@ function getMachineCode() {
       .toUpperCase();
     localStorage.setItem(MACHINE_CODE_KEY, code);
   }
+  machineCodeCache = code;
   return code;
 }
 
@@ -451,7 +458,7 @@ function licenseStatus() {
 }
 
 async function loadVerifiedLicense() {
-  const licenseCode = localStorage.getItem(LICENSE_STORAGE_KEY);
+  const licenseCode = DESKTOP_MODE ? await window.desktopApp.loadLicense() : localStorage.getItem(LICENSE_STORAGE_KEY);
   if (!licenseCode) return null;
   return verifyLicenseCode(licenseCode);
 }
@@ -499,6 +506,21 @@ function base64urlToBytes(value) {
 function base64ToBytes(value) {
   const padded = value.padEnd(Math.ceil(value.length / 4) * 4, "=");
   return Uint8Array.from(atob(padded), (char) => char.charCodeAt(0));
+}
+
+async function copyText(text) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+  document.execCommand("copy");
+  textarea.remove();
 }
 
 function standaloneLimit(kind) {
@@ -565,6 +587,10 @@ function normalizeTransactionSnapshots(value) {
 }
 
 function saveLocalState() {
+  if (DESKTOP_MODE) {
+    window.desktopApp.saveState(state).catch((error) => console.error("保存 SQLite 失败", error));
+    return;
+  }
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
 
@@ -1136,7 +1162,7 @@ function openLicenseModal(message = "") {
     <div class="form-grid">
       <div class="form-field full">
         <label for="licenseCode">授权码</label>
-        <textarea id="licenseCode" name="licenseCode" placeholder="把 REL1 开头的授权码粘贴到这里">${escapeHtml(localStorage.getItem(LICENSE_STORAGE_KEY) || "")}</textarea>
+        <textarea id="licenseCode" name="licenseCode" placeholder="把 REL1 开头的授权码粘贴到这里">${escapeHtml(activeLicense?.licenseCode || (!DESKTOP_MODE ? localStorage.getItem(LICENSE_STORAGE_KEY) || "" : ""))}</textarea>
       </div>
       <p class="form-message full" id="licenseMessage"></p>
     </div>
@@ -1149,7 +1175,7 @@ function openLicenseModal(message = "") {
     </div>
   `;
   document.querySelector("#copyMachineCodeBtn").addEventListener("click", async () => {
-    await navigator.clipboard.writeText(formatMachineCode(machineCode));
+    await copyText(formatMachineCode(machineCode));
     document.querySelector("#licenseMessage").textContent = "机器码已复制。";
   });
   els.modalForm.onsubmit = async (event) => {
@@ -1161,7 +1187,8 @@ function openLicenseModal(message = "") {
       return;
     }
     activeLicense = result;
-    localStorage.setItem(LICENSE_STORAGE_KEY, licenseCode);
+    if (DESKTOP_MODE) await window.desktopApp.saveLicense(licenseCode);
+    else localStorage.setItem(LICENSE_STORAGE_KEY, licenseCode);
     closeModal();
     showApp();
   };
@@ -1334,7 +1361,7 @@ function openBriefModal() {
     </div>
   `;
   document.querySelector("#copyBriefBtn").addEventListener("click", async () => {
-    await navigator.clipboard.writeText(lines.join("\n"));
+    await copyText(lines.join("\n"));
     alert("简报已复制");
   });
   bindCloseButtons();
