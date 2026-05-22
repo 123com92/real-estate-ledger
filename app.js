@@ -1,4 +1,12 @@
 const STORAGE_KEY = "realEstateLedger.v2";
+const LICENSE_STORAGE_KEY = "realEstateLedger.license.v1";
+const MACHINE_CODE_KEY = "realEstateLedger.machineCode.v1";
+const STANDALONE_MODE =
+  new URLSearchParams(window.location.search).get("standalone") === "1" || window.location.protocol === "file:";
+const TRIAL_LIMITS = { communities: 2, properties: 10, transactions: 30 };
+const PRODUCT_PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEAs8DBFmDQpTV4AvpBYFUfkcqSBejpcyUsxExj0/NN0kY=
+-----END PUBLIC KEY-----`;
 const MONEY_FORMATTER = new Intl.NumberFormat("zh-CN", {
   style: "currency",
   currency: "CNY",
@@ -194,6 +202,7 @@ let state = loadLocalState();
 let currentUser = null;
 let authMode = "login";
 let syncTimer = null;
+let activeLicense = null;
 let transactionFilters = {
   startDate: "",
   endDate: "",
@@ -211,6 +220,7 @@ const els = {
   loginTab: document.querySelector("#loginTab"),
   registerTab: document.querySelector("#registerTab"),
   currentUser: document.querySelector("#currentUser"),
+  licenseBtn: document.querySelector("#licenseBtn"),
   userAdminBtn: document.querySelector("#userAdminBtn"),
   communityList: document.querySelector("#communityList"),
   communitySearch: document.querySelector("#communitySearch"),
@@ -248,6 +258,7 @@ document.querySelector("#exportFinanceBtn").addEventListener("click", openFinanc
 document.querySelector("#logoutBtn").addEventListener("click", logout);
 document.querySelector("#demoBtn").addEventListener("click", openPropertyImportModal);
 document.querySelector("#clearTransactionFilters").addEventListener("click", clearTransactionFilters);
+els.licenseBtn.addEventListener("click", openLicenseModal);
 els.userAdminBtn.addEventListener("click", openUserAdminModal);
 els.communitySearch.addEventListener("input", renderCommunities);
 els.transactionFilters.addEventListener("input", updateTransactionFilters);
@@ -278,6 +289,14 @@ setAuthMode("login");
 boot();
 
 async function boot() {
+  if (STANDALONE_MODE) {
+    activeLicense = await loadVerifiedLicense();
+    currentUser = standaloneUser();
+    state = normalizeState(loadLocalState());
+    showApp();
+    if (!licenseStatus().ok) openLicenseModal();
+    return;
+  }
   try {
     const { user } = await api("/api/auth/me");
     currentUser = user;
@@ -298,8 +317,14 @@ function showAuth() {
 function showApp() {
   els.authScreen.hidden = true;
   els.appShell.hidden = false;
-  els.currentUser.textContent = `${currentUser.name || currentUser.email} · ${currentUser.role === "admin" ? "管理员" : "成员"}`;
-  els.userAdminBtn.hidden = currentUser.role !== "admin";
+  const license = licenseStatus();
+  els.currentUser.textContent = STANDALONE_MODE
+    ? `${license.ok ? license.payload.customer : "单机试用版"} · ${license.ok ? "已授权" : "未授权"}`
+    : `${currentUser.name || currentUser.email} · ${currentUser.role === "admin" ? "管理员" : "成员"}`;
+  els.licenseBtn.hidden = !STANDALONE_MODE;
+  els.userAdminBtn.hidden = STANDALONE_MODE || currentUser.role !== "admin";
+  document.querySelector("#syncBtn").hidden = STANDALONE_MODE;
+  document.querySelector("#logoutBtn").textContent = STANDALONE_MODE ? "关闭" : "退出";
   render();
 }
 
@@ -371,6 +396,10 @@ function authErrorMessage(message, mode) {
 }
 
 async function logout() {
+  if (STANDALONE_MODE) {
+    alert("单机版数据已保存在本机。可以直接关闭窗口。");
+    return;
+  }
   await api("/api/auth/logout", { method: "POST" }).catch(() => {});
   currentUser = null;
   showAuth();
@@ -388,6 +417,114 @@ async function api(path, options = {}) {
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(body.error || "请求失败，请稍后再试");
   return body;
+}
+
+function standaloneUser() {
+  return { id: "standalone", email: "", name: "单机版", role: "admin", status: "active" };
+}
+
+function getMachineCode() {
+  let code = localStorage.getItem(MACHINE_CODE_KEY);
+  if (!code) {
+    const bytes = new Uint8Array(10);
+    crypto.getRandomValues(bytes);
+    code = Array.from(bytes)
+      .map((item) => item.toString(16).padStart(2, "0"))
+      .join("")
+      .toUpperCase();
+    localStorage.setItem(MACHINE_CODE_KEY, code);
+  }
+  return code;
+}
+
+function formatMachineCode(value) {
+  return String(value || "")
+    .replace(/[^A-Z0-9]/gi, "")
+    .toUpperCase()
+    .match(/.{1,4}/g)
+    ?.join("-") || "";
+}
+
+function licenseStatus() {
+  if (activeLicense?.ok) return activeLicense;
+  return { ok: false, reason: "未授权", payload: null };
+}
+
+async function loadVerifiedLicense() {
+  const licenseCode = localStorage.getItem(LICENSE_STORAGE_KEY);
+  if (!licenseCode) return null;
+  return verifyLicenseCode(licenseCode);
+}
+
+async function verifyLicenseCode(licenseCode) {
+  const [prefix, encodedPayload, signature] = String(licenseCode || "").trim().split(".");
+  if (prefix !== "REL1" || !encodedPayload || !signature) {
+    return { ok: false, reason: "授权码格式不正确" };
+  }
+  try {
+    const publicKey = await crypto.subtle.importKey(
+      "spki",
+      pemToArrayBuffer(PRODUCT_PUBLIC_KEY),
+      { name: "Ed25519" },
+      false,
+      ["verify"],
+    );
+    const validSignature = await crypto.subtle.verify(
+      { name: "Ed25519" },
+      publicKey,
+      base64urlToBytes(signature),
+      new TextEncoder().encode(encodedPayload),
+    );
+    if (!validSignature) return { ok: false, reason: "授权码签名无效" };
+    const payload = JSON.parse(new TextDecoder().decode(base64urlToBytes(encodedPayload)));
+    if (payload.machineCode !== getMachineCode()) return { ok: false, reason: "授权码不属于这台电脑", payload };
+    if (payload.expiresAt && new Date(payload.expiresAt).getTime() < Date.now()) {
+      return { ok: false, reason: "授权码已过期", payload };
+    }
+    return { ok: true, payload, licenseCode };
+  } catch (error) {
+    return { ok: false, reason: error.message || "授权码校验失败" };
+  }
+}
+
+function pemToArrayBuffer(pem) {
+  const base64 = pem.replace(/-----[^-]+-----/g, "").replace(/\s/g, "");
+  return base64ToBytes(base64).buffer;
+}
+
+function base64urlToBytes(value) {
+  return base64ToBytes(String(value).replace(/-/g, "+").replace(/_/g, "/"));
+}
+
+function base64ToBytes(value) {
+  const padded = value.padEnd(Math.ceil(value.length / 4) * 4, "=");
+  return Uint8Array.from(atob(padded), (char) => char.charCodeAt(0));
+}
+
+function standaloneLimit(kind) {
+  const license = licenseStatus();
+  const value = license.ok ? license.payload?.limits?.[kind] : TRIAL_LIMITS[kind];
+  return Number(value || 0) || Infinity;
+}
+
+function standaloneCount(kind) {
+  if (kind === "communities") return state.communities.length;
+  if (kind === "properties") return state.properties.length;
+  if (kind === "transactions") return state.transactions.length;
+  return 0;
+}
+
+function ensureStandaloneQuota(kind, addCount = 1) {
+  if (!STANDALONE_MODE) return true;
+  const limit = standaloneLimit(kind);
+  if (standaloneCount(kind) + addCount <= limit) return true;
+  openLicenseModal(`试用版已达到上限：${trialLimitLabel(kind)}。请输入授权码后继续使用完整功能。`);
+  return false;
+}
+
+function trialLimitLabel(kind) {
+  const labels = { communities: "小区数量", properties: "房源数量", transactions: "流水数量" };
+  return `${labels[kind] || "数据数量"} ${standaloneLimit(kind) === Infinity ? "不限" : `${standaloneLimit(kind)} 条`}`;
 }
 
 function loadLocalState() {
@@ -432,11 +569,17 @@ function saveLocalState() {
 }
 
 function scheduleSync() {
+  if (STANDALONE_MODE) return;
   clearTimeout(syncTimer);
   syncTimer = setTimeout(() => syncNow(false), 450);
 }
 
 async function syncNow(showNotice) {
+  if (STANDALONE_MODE) {
+    saveLocalState();
+    if (showNotice) alert("单机版数据已保存到本机");
+    return;
+  }
   try {
     await api("/api/ledger", {
       method: "PUT",
@@ -829,6 +972,7 @@ function openCommunityModal(community = null) {
     if (!data.name) return alert("请填写小区名称");
     if (isEdit) Object.assign(community, data);
     else {
+      if (!ensureStandaloneQuota("communities")) return;
       const created = { id: uid(), ...data };
       state.communities.push(created);
       state.selectedCommunityId = created.id;
@@ -934,7 +1078,10 @@ function openPropertyModal(property = null) {
     const data = normalizePropertyData(formData());
     if (!data.name) return alert("请填写房源名称");
     if (isEdit) Object.assign(property, data);
-    else state.properties.push({ id: uid(), ...data });
+    else {
+      if (!ensureStandaloneQuota("properties")) return;
+      state.properties.push({ id: uid(), ...data });
+    }
     closeModal();
     render();
   };
@@ -959,6 +1106,65 @@ function openPropertyModal(property = null) {
       render();
     });
   }
+  bindCloseButtons();
+  showModal();
+}
+
+function openLicenseModal(message = "") {
+  const license = licenseStatus();
+  const machineCode = getMachineCode();
+  els.modalTitle.textContent = "单机版授权";
+  els.modalForm.innerHTML = `
+    ${message ? `<div class="empty-state">${escapeHtml(message)}</div>` : ""}
+    <div class="license-panel">
+      <div>
+        <span>授权状态</span>
+        <strong>${license.ok ? "已授权" : "试用版"}</strong>
+        <p>${license.ok ? `授权客户：${escapeHtml(license.payload.customer)}` : "当前可试用少量数据，输入授权码后解锁完整功能。"}</p>
+      </div>
+      <div>
+        <span>本机机器码</span>
+        <strong>${formatMachineCode(machineCode)}</strong>
+        <p>把这串机器码发给销售人员，用它生成专属授权码。</p>
+      </div>
+    </div>
+    <div class="license-limits">
+      <span>小区：${state.communities.length} / ${trialLimitLabel("communities").replace("小区数量 ", "")}</span>
+      <span>房源：${state.properties.length} / ${trialLimitLabel("properties").replace("房源数量 ", "")}</span>
+      <span>流水：${state.transactions.length} / ${trialLimitLabel("transactions").replace("流水数量 ", "")}</span>
+    </div>
+    <div class="form-grid">
+      <div class="form-field full">
+        <label for="licenseCode">授权码</label>
+        <textarea id="licenseCode" name="licenseCode" placeholder="把 REL1 开头的授权码粘贴到这里">${escapeHtml(localStorage.getItem(LICENSE_STORAGE_KEY) || "")}</textarea>
+      </div>
+      <p class="form-message full" id="licenseMessage"></p>
+    </div>
+    <div class="form-actions">
+      <button class="secondary-button" type="button" id="copyMachineCodeBtn">复制机器码</button>
+      <div class="right">
+        <button class="secondary-button" type="button" data-close>关闭</button>
+        <button class="primary-button" type="submit">保存授权</button>
+      </div>
+    </div>
+  `;
+  document.querySelector("#copyMachineCodeBtn").addEventListener("click", async () => {
+    await navigator.clipboard.writeText(formatMachineCode(machineCode));
+    document.querySelector("#licenseMessage").textContent = "机器码已复制。";
+  });
+  els.modalForm.onsubmit = async (event) => {
+    event.preventDefault();
+    const licenseCode = formData().licenseCode.trim();
+    const result = await verifyLicenseCode(licenseCode);
+    if (!result.ok) {
+      document.querySelector("#licenseMessage").textContent = result.reason;
+      return;
+    }
+    activeLicense = result;
+    localStorage.setItem(LICENSE_STORAGE_KEY, licenseCode);
+    closeModal();
+    showApp();
+  };
   bindCloseButtons();
   showModal();
 }
@@ -1070,6 +1276,7 @@ function openTransactionModal(seed = {}) {
       property.rentDueDate = data.date;
       property.status = "rented";
     }
+    if (!ensureStandaloneQuota("transactions")) return;
     state.transactions.push({
       id: uid(),
       ...data,
@@ -1531,6 +1738,9 @@ async function importPropertyWorkbook(file) {
     }
     let community = state.communities.find((item) => item.name === communityName);
     if (!community) {
+      if (!ensureStandaloneQuota("communities")) {
+        throw new Error("试用版小区数量已达上限，请授权后再导入更多小区。");
+      }
       community = {
         id: uid(),
         name: communityName,
@@ -1566,6 +1776,9 @@ async function importPropertyWorkbook(file) {
       Object.assign(existing, importedProperty);
       updatedProperties += 1;
     } else {
+      if (!ensureStandaloneQuota("properties")) {
+        throw new Error("试用版房源数量已达上限，请授权后再导入更多房源。");
+      }
       state.properties.push({ id: uid(), ...importedProperty });
       createdProperties += 1;
     }
