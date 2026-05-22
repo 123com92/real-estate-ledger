@@ -335,11 +335,30 @@ function loadLocalState() {
 }
 
 function normalizeState(value) {
-  return {
+  return normalizeTransactionSnapshots({
     selectedCommunityId: value?.selectedCommunityId || "all",
     communities: Array.isArray(value?.communities) ? value.communities : [],
     properties: Array.isArray(value?.properties) ? value.properties : [],
     transactions: Array.isArray(value?.transactions) ? value.transactions : [],
+  });
+}
+
+function normalizeTransactionSnapshots(value) {
+  const communities = value.communities || [];
+  const properties = value.properties || [];
+  return {
+    ...value,
+    transactions: (value.transactions || []).map((transaction) => {
+      const community = communities.find((item) => item.id === transaction.communityId);
+      const property = properties.find((item) => item.id === transaction.propertyId);
+      return {
+        ...transaction,
+        communitySnapshotId: transaction.communitySnapshotId || transaction.communityId || "",
+        propertySnapshotId: transaction.propertySnapshotId || transaction.propertyId || "",
+        communityName: transaction.communityName || community?.name || "",
+        propertyName: transaction.propertyName || property?.name || "",
+      };
+    }),
   };
 }
 
@@ -377,7 +396,10 @@ function scopedTransactions() {
   const propertyIds = new Set(scopedProperties().map((item) => item.id));
   if (state.selectedCommunityId === "all") return state.transactions;
   return state.transactions.filter(
-    (item) => item.communityId === state.selectedCommunityId || propertyIds.has(item.propertyId),
+    (item) =>
+      item.communityId === state.selectedCommunityId ||
+      propertyIds.has(item.propertyId) ||
+      item.communitySnapshotId === state.selectedCommunityId,
   );
 }
 
@@ -563,12 +585,14 @@ function renderTransactions() {
     .map((item) => {
       const community = state.communities.find((c) => c.id === item.communityId);
       const property = state.properties.find((p) => p.id === item.propertyId);
+      const communityName = community?.name || item.communityName || "-";
+      const propertyName = property?.name || item.propertyName || "-";
       return `
         <tr>
           <td>${escapeHtml(item.date)}</td>
           <td>${item.type === "income" ? "收入" : "成本"}</td>
           <td>${escapeHtml(item.category)}</td>
-          <td>${escapeHtml(community?.name || "-")} / ${escapeHtml(property?.name || "-")}</td>
+          <td>${escapeHtml(communityName)} / ${escapeHtml(propertyName)}</td>
           <td class="${item.type === "income" ? "amount-income" : "amount-expense"}">
             ${item.type === "income" ? "+" : "-"}${money(item.amount)}
           </td>
@@ -694,7 +718,7 @@ function openCommunityDeleteConfirm(community) {
   els.modalTitle.textContent = "确认删除小区";
   els.modalForm.innerHTML = `
     <div class="empty-state">
-      删除后将同时移除该小区下的 ${properties.length} 套房源，以及 ${transactions.length} 条相关收支流水。这个操作不能撤销。
+      删除后将移除该小区下的 ${properties.length} 套房源。${transactions.length} 条相关收支流水会保留为历史财务记录，并保存当时的小区和房源名称。
     </div>
     <div class="form-grid">
       <div class="form-field full">
@@ -720,9 +744,19 @@ function openCommunityDeleteConfirm(community) {
     }
     state.communities = state.communities.filter((item) => item.id !== community.id);
     state.properties = state.properties.filter((item) => item.communityId !== community.id);
-    state.transactions = state.transactions.filter(
-      (item) => item.communityId !== community.id && !propertyIds.has(item.propertyId),
-    );
+    state.transactions = state.transactions.map((item) => {
+      if (item.communityId !== community.id && !propertyIds.has(item.propertyId)) return item;
+      const property = properties.find((propertyItem) => propertyItem.id === item.propertyId);
+      return {
+        ...item,
+        communitySnapshotId: item.communitySnapshotId || community.id,
+        propertySnapshotId: item.propertySnapshotId || item.propertyId,
+        communityName: item.communityName || community.name,
+        propertyName: item.propertyName || property?.name || "",
+        communityId: "",
+        propertyId: "",
+      };
+    });
     state.selectedCommunityId = "all";
     closeModal();
     render();
@@ -841,6 +875,7 @@ function openTransactionModal(seed = {}) {
     const data = formData();
     if (!data.amount || Number(data.amount) <= 0) return alert("请填写有效金额");
     const property = state.properties.find((item) => item.id === data.propertyId);
+    const community = state.communities.find((item) => item.id === data.communityId);
     if (
       property &&
       data.type === "income" &&
@@ -853,6 +888,10 @@ function openTransactionModal(seed = {}) {
     state.transactions.push({
       id: uid(),
       ...data,
+      communitySnapshotId: data.communityId,
+      propertySnapshotId: data.propertyId,
+      communityName: community?.name || "",
+      propertyName: property?.name || "",
       amount: Number(data.amount),
     });
     closeModal();
@@ -940,8 +979,8 @@ function exportFinanceExcel(startDate, endDate) {
         date: item.date,
         type: item.type === "income" ? "收入" : "成本",
         category: item.category || "",
-        community: community?.name || "",
-        property: property?.name || "",
+        community: community?.name || item.communityName || "",
+        property: property?.name || item.propertyName || "",
         amount: Number(item.amount || 0),
         signedAmount: item.type === "income" ? Number(item.amount || 0) : -Number(item.amount || 0),
         note: item.note || "",
