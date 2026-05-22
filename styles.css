@@ -568,6 +568,35 @@ button {
   overflow-x: auto;
 }
 
+.transaction-filters {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 10px;
+  align-items: end;
+}
+
+.filter-field {
+  display: grid;
+  gap: 6px;
+}
+
+.filter-field.wide {
+  grid-column: span 2;
+}
+
+.filter-field label {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.filter-summary {
+  margin-bottom: 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
@@ -778,6 +807,10 @@ th {
     grid-column: 1 / -1;
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .transaction-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 760px) {
@@ -807,8 +840,13 @@ th {
   .content-grid,
   .community-summary,
   .side-column,
+  .transaction-filters,
   .form-grid {
     grid-template-columns: 1fr;
+  }
+
+  .filter-field.wide {
+    grid-column: auto;
   }
 
   .modal-backdrop {

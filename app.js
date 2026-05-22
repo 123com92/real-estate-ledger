@@ -194,6 +194,13 @@ let state = loadLocalState();
 let currentUser = null;
 let authMode = "login";
 let syncTimer = null;
+let transactionFilters = {
+  startDate: "",
+  endDate: "",
+  type: "",
+  category: "",
+  keyword: "",
+};
 
 const els = {
   authScreen: document.querySelector("#authScreen"),
@@ -211,6 +218,13 @@ const els = {
   communityHeading: document.querySelector("#communityHeading"),
   communitySummary: document.querySelector("#communitySummary"),
   propertyGrid: document.querySelector("#propertyGrid"),
+  transactionFilters: document.querySelector("#transactionFilters"),
+  transactionStartDate: document.querySelector("#transactionStartDate"),
+  transactionEndDate: document.querySelector("#transactionEndDate"),
+  transactionTypeFilter: document.querySelector("#transactionTypeFilter"),
+  transactionCategoryFilter: document.querySelector("#transactionCategoryFilter"),
+  transactionKeyword: document.querySelector("#transactionKeyword"),
+  transactionFilterSummary: document.querySelector("#transactionFilterSummary"),
   transactionTable: document.querySelector("#transactionTable"),
   rentAlerts: document.querySelector("#rentAlerts"),
   optimizationList: document.querySelector("#optimizationList"),
@@ -233,8 +247,11 @@ document.querySelector("#syncBtn").addEventListener("click", () => syncNow(true)
 document.querySelector("#exportFinanceBtn").addEventListener("click", openFinanceExportModal);
 document.querySelector("#logoutBtn").addEventListener("click", logout);
 document.querySelector("#demoBtn").addEventListener("click", openPropertyImportModal);
+document.querySelector("#clearTransactionFilters").addEventListener("click", clearTransactionFilters);
 els.userAdminBtn.addEventListener("click", openUserAdminModal);
 els.communitySearch.addEventListener("input", renderCommunities);
+els.transactionFilters.addEventListener("input", updateTransactionFilters);
+els.transactionFilters.addEventListener("change", updateTransactionFilters);
 els.loginTab.addEventListener("click", () => setAuthMode("login"));
 els.registerTab.addEventListener("click", () => setAuthMode("register"));
 els.authForm.addEventListener("submit", submitAuth);
@@ -452,6 +469,51 @@ function scopedTransactions() {
   );
 }
 
+function transactionNames(item) {
+  const community = state.communities.find((c) => c.id === item.communityId);
+  const property = state.properties.find((p) => p.id === item.propertyId);
+  return {
+    communityName: community?.name || item.communityName || "-",
+    propertyName: property?.name || item.propertyName || "-",
+  };
+}
+
+function filteredTransactions() {
+  const keyword = transactionFilters.keyword.trim().toLowerCase();
+  return scopedTransactions().filter((item) => {
+    const { communityName, propertyName } = transactionNames(item);
+    const text = [item.date, item.category, item.note, communityName, propertyName].join(" ").toLowerCase();
+    return (
+      (!transactionFilters.startDate || item.date >= transactionFilters.startDate) &&
+      (!transactionFilters.endDate || item.date <= transactionFilters.endDate) &&
+      (!transactionFilters.type || item.type === transactionFilters.type) &&
+      (!transactionFilters.category || item.category === transactionFilters.category) &&
+      (!keyword || text.includes(keyword))
+    );
+  });
+}
+
+function updateTransactionFilters() {
+  transactionFilters = {
+    startDate: els.transactionStartDate.value,
+    endDate: els.transactionEndDate.value,
+    type: els.transactionTypeFilter.value,
+    category: els.transactionCategoryFilter.value,
+    keyword: els.transactionKeyword.value,
+  };
+  renderTransactions();
+}
+
+function clearTransactionFilters() {
+  transactionFilters = { startDate: "", endDate: "", type: "", category: "", keyword: "" };
+  els.transactionStartDate.value = "";
+  els.transactionEndDate.value = "";
+  els.transactionTypeFilter.value = "";
+  els.transactionCategoryFilter.value = "";
+  els.transactionKeyword.value = "";
+  renderTransactions();
+}
+
 function totals(transactions = scopedTransactions()) {
   const income = transactions
     .filter((item) => item.type === "income")
@@ -628,17 +690,18 @@ function renderProperties() {
 }
 
 function renderTransactions() {
-  const rows = scopedTransactions().slice().sort(byDateDesc);
+  const scopedRows = scopedTransactions();
+  renderTransactionCategoryFilter(scopedRows);
+  const rows = filteredTransactions().slice().sort(byDateDesc);
+  const stat = totals(rows);
+  els.transactionFilterSummary.textContent = `当前显示 ${rows.length} 条流水，收入 ${money(stat.income)}，成本 ${money(stat.expense)}，净利润 ${money(stat.profit)}`;
   if (!rows.length) {
-    els.transactionTable.innerHTML = `<tr><td colspan="6">暂无流水，点击“记一笔”添加收入或成本。</td></tr>`;
+    els.transactionTable.innerHTML = `<tr><td colspan="6">没有符合筛选条件的流水，可调整条件或点击“清空筛选”。</td></tr>`;
     return;
   }
   els.transactionTable.innerHTML = rows
     .map((item) => {
-      const community = state.communities.find((c) => c.id === item.communityId);
-      const property = state.properties.find((p) => p.id === item.propertyId);
-      const communityName = community?.name || item.communityName || "-";
-      const propertyName = property?.name || item.propertyName || "-";
+      const { communityName, propertyName } = transactionNames(item);
       return `
         <tr>
           <td>${escapeHtml(item.date)}</td>
@@ -653,6 +716,27 @@ function renderTransactions() {
       `;
     })
     .join("");
+}
+
+function renderTransactionCategoryFilter(rows) {
+  const current = els.transactionCategoryFilter.value;
+  const categories = Array.from(
+    new Set([
+      ...TRANSACTION_CATEGORIES.income,
+      ...TRANSACTION_CATEGORIES.expense,
+      ...rows.map((item) => item.category).filter(Boolean),
+    ]),
+  );
+  els.transactionCategoryFilter.innerHTML = [
+    `<option value="">全部分类</option>`,
+    ...categories.map(
+      (item) => `<option value="${escapeAttr(item)}" ${item === current ? "selected" : ""}>${escapeHtml(item)}</option>`,
+    ),
+  ].join("");
+  if (current && !categories.includes(current)) {
+    els.transactionCategoryFilter.value = "";
+    transactionFilters.category = "";
+  }
 }
 
 function rentAlertItems() {
