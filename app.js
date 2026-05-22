@@ -215,6 +215,7 @@ els.modalBackdrop.addEventListener("click", (event) => {
 
 window.setAuthMode = setAuthMode;
 window.submitAuth = submitAuth;
+window.openSummaryDetailModal = openSummaryDetailModal;
 setAuthMode("login");
 boot();
 
@@ -511,13 +512,19 @@ function renderProperties() {
   const rented = properties.filter((item) => item.status === "rented").length;
   const vacant = properties.filter((item) => item.status === "vacant").length;
   els.communitySummary.innerHTML = [
-    ["房源数量", `${properties.length} 套`],
-    ["已出租", `${rented} 套`],
-    ["待出租", `${vacant} 套`],
-    ["净利润", money(stat.profit)],
+    ["properties", "房源数量", `${properties.length} 套`],
+    ["rented", "已出租", `${rented} 套`],
+    ["vacant", "待出租", `${vacant} 套`],
+    ["profit", "净利润", money(stat.profit)],
   ]
-    .map(([label, value]) => `<div class="summary-chip"><span>${label}</span><strong>${value}</strong></div>`)
+    .map(
+      ([type, label, value]) =>
+        `<button class="summary-chip" type="button" data-summary="${type}" onclick="window.openSummaryDetailModal('${type}')" title="点击查看${label}明细"><span>${label}</span><strong>${value}</strong></button>`,
+    )
     .join("");
+  els.communitySummary.querySelectorAll("[data-summary]").forEach((button) => {
+    button.addEventListener("click", () => openSummaryDetailModal(button.dataset.summary));
+  });
 
   if (!properties.length) {
     els.propertyGrid.innerHTML = `<div class="empty-state">当前小区还没有房源，点击“添加房源”开始记录。</div>`;
@@ -1000,6 +1007,124 @@ function openBriefModal() {
   });
   bindCloseButtons();
   showModal();
+}
+
+function openSummaryDetailModal(type) {
+  const properties = scopedProperties();
+  const transactions = scopedTransactions().slice().sort(byDateDesc);
+  const titles = {
+    properties: "全部房源明细",
+    rented: "已出租房源",
+    vacant: "待出租房源",
+    profit: "净利润明细",
+  };
+  els.modalTitle.textContent = titles[type] || "明细";
+  if (type === "profit") {
+    const stat = totals(transactions);
+    els.modalForm.innerHTML = `
+      <div class="community-summary detail-summary">
+        <div class="summary-chip static"><span>收入合计</span><strong>${money(stat.income)}</strong></div>
+        <div class="summary-chip static"><span>成本合计</span><strong>${money(stat.expense)}</strong></div>
+        <div class="summary-chip static"><span>净利润</span><strong>${money(stat.profit)}</strong></div>
+        <div class="summary-chip static"><span>流水数量</span><strong>${transactions.length} 条</strong></div>
+      </div>
+      ${transactionDetailTable(transactions)}
+      <div class="form-actions">
+        <span></span>
+        <div class="right"><button class="secondary-button" type="button" data-close>关闭</button></div>
+      </div>
+    `;
+  } else {
+    const filtered =
+      type === "rented"
+        ? properties.filter((item) => item.status === "rented")
+        : type === "vacant"
+          ? properties.filter((item) => item.status === "vacant")
+          : properties;
+    els.modalForm.innerHTML = `
+      <div class="detail-card-grid">
+        ${
+          filtered.length
+            ? filtered.map(propertyDetailCard).join("")
+            : `<div class="empty-state">当前范围没有对应房源。</div>`
+        }
+      </div>
+      <div class="form-actions">
+        <span></span>
+        <div class="right"><button class="secondary-button" type="button" data-close>关闭</button></div>
+      </div>
+    `;
+  }
+  bindCloseButtons();
+  showModal();
+}
+
+function propertyDetailCard(property) {
+  const community = state.communities.find((item) => item.id === property.communityId);
+  const diff = daysBetween(property.rentDueDate);
+  const overdue = property.status === "rented" && diff < 0;
+  const status = overdue ? "overdue" : property.status;
+  const statusText = overdue ? "房租逾期" : property.status === "rented" ? "已出租" : "待出租";
+  const dueText =
+    property.status === "rented"
+      ? diff < 0
+        ? `逾期 ${Math.abs(diff)} 天`
+        : `${property.rentDueDate} 交租`
+      : "当前空置";
+  return `
+    <article class="property-card ${status}">
+      <div>
+        <h4>${escapeHtml(property.name)}</h4>
+        <p>${escapeHtml(community?.name || "历史房源")} · ${escapeHtml(property.layout || "未填户型")} · ${property.area || 0}㎡</p>
+      </div>
+      <div class="property-meta">
+        <span class="tag ${status}">${statusText}</span>
+        <span class="tag neutral">${escapeHtml(dueText)}</span>
+      </div>
+      <p>月租 ${money(property.monthlyRent)} · 房东成本 ${money(property.landlordRent)}</p>
+      <p>租客 ${escapeHtml(property.tenant || "未填写")}</p>
+    </article>
+  `;
+}
+
+function transactionDetailTable(transactions) {
+  if (!transactions.length) return `<div class="empty-state">当前范围没有收支流水。</div>`;
+  return `
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>日期</th>
+            <th>类型</th>
+            <th>分类</th>
+            <th>小区 / 房源</th>
+            <th>金额</th>
+            <th>备注</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${transactions
+            .map((item) => {
+              const community = state.communities.find((c) => c.id === item.communityId);
+              const property = state.properties.find((p) => p.id === item.propertyId);
+              const communityName = community?.name || item.communityName || "-";
+              const propertyName = property?.name || item.propertyName || "-";
+              return `
+                <tr>
+                  <td>${escapeHtml(item.date)}</td>
+                  <td>${item.type === "income" ? "收入" : "成本"}</td>
+                  <td>${escapeHtml(item.category)}</td>
+                  <td>${escapeHtml(communityName)} / ${escapeHtml(propertyName)}</td>
+                  <td class="${item.type === "income" ? "amount-income" : "amount-expense"}">${item.type === "income" ? "+" : "-"}${money(item.amount)}</td>
+                  <td>${escapeHtml(item.note || "")}</td>
+                </tr>
+              `;
+            })
+            .join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
 }
 
 function openFinanceExportModal() {

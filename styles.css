@@ -437,6 +437,21 @@ button {
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 12px;
+  text-align: left;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.summary-chip:hover,
+.summary-chip:focus {
+  border-color: var(--green);
+  box-shadow: 0 8px 24px rgba(23, 36, 34, 0.1);
+  transform: translateY(-1px);
+}
+
+.summary-chip.static {
+  cursor: default;
+  transform: none;
 }
 
 .summary-chip span {
@@ -448,6 +463,16 @@ button {
 .summary-chip strong {
   display: block;
   margin-top: 6px;
+}
+
+.detail-summary {
+  margin-bottom: 16px;
+}
+
+.detail-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 14px;
 }
 
 .property-grid {
