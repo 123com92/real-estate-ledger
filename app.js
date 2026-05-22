@@ -890,12 +890,13 @@ function openTransactionModal(seed = {}) {
   const selectedProperty = state.properties.find((item) => item.id === seed.propertyId);
   const propertySearchValue = selectedProperty ? selectedProperty.name : "";
   const typeValue = seed.type || "income";
-  const categoryValue = seed.category || TRANSACTION_CATEGORIES[typeValue][0];
+  const categoryOptions = TRANSACTION_CATEGORIES[typeValue];
+  const categoryValue = categoryOptions.includes(seed.category) ? seed.category : categoryOptions[0];
   els.modalTitle.textContent = "新增收支流水";
   els.modalForm.innerHTML = `
     <div class="form-grid">
       ${selectField("类型", "type", [["income", "收入"], ["expense", "成本"]], typeValue)}
-      ${field("分类", "category", categoryValue, "text", "", "transactionCategoryOptions")}
+      ${selectField("分类", "category", categoryOptions.map((item) => [item, item]), categoryValue)}
       ${selectField("所属小区", "communityId", state.communities.map((item) => [item.id, item.name]), communityId)}
       <div class="form-field">
         <label for="propertySearch">关联房源</label>
@@ -909,9 +910,6 @@ function openTransactionModal(seed = {}) {
       ${field("日期", "date", seed.date || today(), "date")}
       ${textArea("备注", "note", seed.note || "", "full")}
     </div>
-    <datalist id="transactionCategoryOptions">
-      ${TRANSACTION_CATEGORIES[typeValue].map((item) => `<option value="${escapeAttr(item)}"></option>`).join("")}
-    </datalist>
     <div class="form-actions">
       <span></span>
       <div class="right">
@@ -941,11 +939,14 @@ function openTransactionModal(seed = {}) {
   };
   const refreshCategories = () => {
     const options = TRANSACTION_CATEGORIES[typeSelect.value];
-    document.querySelector("#transactionCategoryOptions").innerHTML = options
-      .map((item) => `<option value="${escapeAttr(item)}"></option>`)
+    const currentCategory = categoryInput.value;
+    categoryInput.innerHTML = options
+      .map(
+        (item) =>
+          `<option value="${escapeAttr(item)}" ${item === currentCategory ? "selected" : ""}>${escapeHtml(item)}</option>`,
+      )
       .join("");
-    if (!categoryInput.value || !TRANSACTION_CATEGORIES.income.includes(categoryInput.value) && !TRANSACTION_CATEGORIES.expense.includes(categoryInput.value)) return;
-    categoryInput.value = options[0];
+    if (!options.includes(currentCategory)) categoryInput.value = options[0];
   };
   const syncRentDueDate = () => {
     const property = resolvePropertyId();
