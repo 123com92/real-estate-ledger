@@ -400,7 +400,7 @@ button {
 
 .community-summary {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 10px;
   margin-bottom: 16px;
 }
@@ -421,6 +421,15 @@ button {
 .summary-chip strong {
   display: block;
   margin-top: 6px;
+}
+
+.community-tools {
+  display: flex;
+  align-items: stretch;
+}
+
+.community-tools button {
+  width: 100%;
 }
 
 .property-grid {

@@ -471,6 +471,11 @@ function renderProperties() {
   const stat = totals();
   const rented = properties.filter((item) => item.status === "rented").length;
   const vacant = properties.filter((item) => item.status === "vacant").length;
+  const community = selectedCommunity();
+  const communityActions =
+    community && state.selectedCommunityId !== "all"
+      ? `<div class="community-tools"><button class="secondary-button" id="editCommunityBtn" type="button">编辑小区</button></div>`
+      : "";
   els.communitySummary.innerHTML = [
     ["房源数量", `${properties.length} 套`],
     ["已出租", `${rented} 套`],
@@ -478,7 +483,8 @@ function renderProperties() {
     ["净利润", money(stat.profit)],
   ]
     .map(([label, value]) => `<div class="summary-chip"><span>${label}</span><strong>${value}</strong></div>`)
-    .join("");
+    .join("") + communityActions;
+  document.querySelector("#editCommunityBtn")?.addEventListener("click", () => openCommunityModal(community));
 
   if (!properties.length) {
     els.propertyGrid.innerHTML = `<div class="empty-state">当前小区还没有房源，点击“添加房源”开始记录。</div>`;
@@ -644,7 +650,7 @@ function openCommunityModal(community = null) {
       ${textArea("备注", "note", community?.note || "", "full")}
     </div>
     <div class="form-actions">
-      <span></span>
+      ${isEdit ? `<button class="danger-button" type="button" data-delete-community="${community.id}">删除小区</button>` : "<span></span>"}
       <div class="right">
         <button class="secondary-button" type="button" data-close>取消</button>
         <button class="primary-button" type="submit">保存</button>
@@ -664,8 +670,57 @@ function openCommunityModal(community = null) {
     closeModal();
     render();
   };
+  const deleteBtn = els.modalForm.querySelector("[data-delete-community]");
+  if (deleteBtn) {
+    deleteBtn.addEventListener("click", () => openCommunityDeleteConfirm(community));
+  }
   bindCloseButtons();
   showModal();
+}
+
+function openCommunityDeleteConfirm(community) {
+  const properties = state.properties.filter((item) => item.communityId === community.id);
+  const propertyIds = new Set(properties.map((item) => item.id));
+  const transactions = state.transactions.filter(
+    (item) => item.communityId === community.id || propertyIds.has(item.propertyId),
+  );
+  els.modalTitle.textContent = "确认删除小区";
+  els.modalForm.innerHTML = `
+    <div class="empty-state">
+      删除后将同时移除该小区下的 ${properties.length} 套房源，以及 ${transactions.length} 条相关收支流水。这个操作不能撤销。
+    </div>
+    <div class="form-grid">
+      <div class="form-field full">
+        <label for="confirmCommunityName">请输入小区名称确认删除：${escapeHtml(community.name)}</label>
+        <input id="confirmCommunityName" name="confirmCommunityName" autocomplete="off" />
+      </div>
+    </div>
+    <div class="form-actions">
+      <button class="secondary-button" type="button" id="backToCommunityEditBtn">返回编辑</button>
+      <div class="right">
+        <button class="secondary-button" type="button" data-close>取消</button>
+        <button class="danger-button" type="submit">确认删除</button>
+      </div>
+    </div>
+  `;
+  document.querySelector("#backToCommunityEditBtn").addEventListener("click", () => openCommunityModal(community));
+  els.modalForm.onsubmit = (event) => {
+    event.preventDefault();
+    const confirmName = formData().confirmCommunityName.trim();
+    if (confirmName !== community.name) {
+      alert("小区名称不匹配，未执行删除");
+      return;
+    }
+    state.communities = state.communities.filter((item) => item.id !== community.id);
+    state.properties = state.properties.filter((item) => item.communityId !== community.id);
+    state.transactions = state.transactions.filter(
+      (item) => item.communityId !== community.id && !propertyIds.has(item.propertyId),
+    );
+    state.selectedCommunityId = "all";
+    closeModal();
+    render();
+  };
+  bindCloseButtons();
 }
 
 function openPropertyModal(property = null) {
