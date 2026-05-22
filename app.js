@@ -11,6 +11,16 @@ const addDays = (offset) => {
   date.setDate(date.getDate() + offset);
   return date.toISOString().slice(0, 10);
 };
+const addMonths = (dateValue, months) => {
+  const source = dateValue ? new Date(dateValue) : new Date();
+  if (Number.isNaN(source.getTime())) return today();
+  const day = source.getDate();
+  const target = new Date(source);
+  target.setMonth(target.getMonth() + months, 1);
+  const lastDay = new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate();
+  target.setDate(Math.min(day, lastDay));
+  return target.toISOString().slice(0, 10);
+};
 const daysBetween = (date) => {
   const base = new Date(today());
   const target = new Date(date);
@@ -745,10 +755,43 @@ function openTransactionModal(seed = {}) {
     const current = formData();
     openTransactionModal({ ...current, communityId: communitySelect.value, propertyId: "" });
   });
+  const typeSelect = els.modalForm.querySelector('[name="type"]');
+  const propertySelect = els.modalForm.querySelector('[name="propertyId"]');
+  const categoryInput = els.modalForm.querySelector('[name="category"]');
+  const amountInput = els.modalForm.querySelector('[name="amount"]');
+  const dateInput = els.modalForm.querySelector('[name="date"]');
+  const syncRentDueDate = () => {
+    const property = state.properties.find((item) => item.id === propertySelect.value);
+    const amount = Number(amountInput.value || 0);
+    const monthlyRent = Number(property?.monthlyRent || 0);
+    const isRentIncome =
+      typeSelect.value === "income" &&
+      property &&
+      monthlyRent > 0 &&
+      String(categoryInput.value || "").includes("租");
+    if (!isRentIncome || amount < monthlyRent) return;
+    const monthsPaid = Math.max(1, Math.floor(amount / monthlyRent + 0.000001));
+    dateInput.value = addMonths(property.rentDueDate || today(), monthsPaid);
+  };
+  [typeSelect, propertySelect, categoryInput, amountInput].forEach((input) => {
+    input.addEventListener("input", syncRentDueDate);
+    input.addEventListener("change", syncRentDueDate);
+  });
+  syncRentDueDate();
   els.modalForm.onsubmit = (event) => {
     event.preventDefault();
     const data = formData();
     if (!data.amount || Number(data.amount) <= 0) return alert("请填写有效金额");
+    const property = state.properties.find((item) => item.id === data.propertyId);
+    if (
+      property &&
+      data.type === "income" &&
+      String(data.category || "").includes("租") &&
+      Number(data.amount || 0) >= Number(property.monthlyRent || 0)
+    ) {
+      property.rentDueDate = data.date;
+      property.status = "rented";
+    }
     state.transactions.push({
       id: uid(),
       ...data,
