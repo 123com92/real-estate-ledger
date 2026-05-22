@@ -74,6 +74,26 @@ http://localhost:3000
 - 每日简报：一键生成今日经营汇总和待交房租清单。
 - 用户管理：管理员可查看用户、切换角色、启用或停用账号。
 
+## 单机版授权工具
+
+项目已预留离线授权码生成器，后续改造成单机安装包时可以用于“机器码 + 授权码”的买断授权模式。
+
+工具位置：
+
+```text
+tools/license/
+```
+
+常用命令：
+
+```powershell
+npm run license:keygen -- --out license-keys
+npm run license:create -- --private-key license-keys/private.pem --machine MACHINE-8F3A-21CD-99K2 --customer "张三房产"
+npm run license:verify -- --public-key license-keys/public.pem --license "REL1.xxx.yyy" --machine MACHINE-8F3A-21CD-99K2
+```
+
+`license-keys/private.pem` 是授权私钥，只能由销售或管理员保管，不能放进客户安装包。客户软件后续只内置公钥用于校验授权码。
+
 ## 说明
 
 当前账本数据以 JSON 快照方式存储，适合几千用户以内的早期版本，迭代速度快。后续如果需要更细的审计、多人协作或复杂报表，可以把小区、房源和流水拆成独立 PostgreSQL 表。

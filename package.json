@@ -5,7 +5,10 @@
   "description": "房产中介经营记账本，支持 Vercel 部署、PostgreSQL 存储和用户管理。",
   "scripts": {
     "dev": "vercel dev",
-    "start": "vercel dev"
+    "start": "vercel dev",
+    "license:keygen": "node tools/license/generate-keypair.js",
+    "license:create": "node tools/license/create-license.js",
+    "license:verify": "node tools/license/verify-license.js"
   },
   "dependencies": {
     "pg": "^8.16.0"
