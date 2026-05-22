@@ -196,12 +196,7 @@ document.querySelector("#briefBtn").addEventListener("click", openBriefModal);
 document.querySelector("#syncBtn").addEventListener("click", () => syncNow(true));
 document.querySelector("#exportFinanceBtn").addEventListener("click", openFinanceExportModal);
 document.querySelector("#logoutBtn").addEventListener("click", logout);
-document.querySelector("#demoBtn").addEventListener("click", () => {
-  if (!confirm("导入示例会覆盖当前账号的经营数据，确定继续吗？")) return;
-  state = defaultState();
-  render();
-  syncNow(true);
-});
+document.querySelector("#demoBtn").addEventListener("click", openPropertyImportModal);
 els.userAdminBtn.addEventListener("click", openUserAdminModal);
 els.communitySearch.addEventListener("input", renderCommunities);
 els.loginTab.addEventListener("click", () => setAuthMode("login"));
@@ -964,6 +959,215 @@ function exportFinanceExcel(startDate, endDate) {
 
 function excelCell(value = "") {
   return escapeHtml(value).replace(/\n/g, "<br />");
+}
+
+const PROPERTY_IMPORT_HEADERS = [
+  "小区名称",
+  "片区",
+  "负责人/合作方式",
+  "小区备注",
+  "房源名称",
+  "户型",
+  "面积㎡",
+  "出租状态",
+  "租客",
+  "月租收入",
+  "房东租金成本",
+  "下次交租日",
+  "装修时间",
+  "房内家电",
+  "家具配置",
+  "房源备注",
+];
+
+function openPropertyImportModal() {
+  els.modalTitle.textContent = "导入房产信息";
+  els.modalForm.innerHTML = `
+    <div class="empty-state">
+      先下载 Excel 模板，按表头填写小区和房源信息，再选择填好的模板导入。系统会按“小区名称 + 房源名称”新增或更新房源，不会清空现有数据。
+    </div>
+    <div class="form-grid">
+      <div class="form-field full">
+        <label for="propertyImportFile">选择已填写的模板文件</label>
+        <input id="propertyImportFile" name="propertyImportFile" type="file" accept=".xls,.html,.htm" />
+      </div>
+    </div>
+    <div class="form-actions">
+      <button class="secondary-button" type="button" id="downloadPropertyTemplateBtn">下载 Excel 模板</button>
+      <div class="right">
+        <button class="secondary-button" type="button" data-close>取消</button>
+        <button class="primary-button" type="submit">导入房产信息</button>
+      </div>
+    </div>
+  `;
+  document.querySelector("#downloadPropertyTemplateBtn").addEventListener("click", downloadPropertyImportTemplate);
+  els.modalForm.onsubmit = async (event) => {
+    event.preventDefault();
+    const file = document.querySelector("#propertyImportFile").files[0];
+    if (!file) return alert("请先选择填写好的 Excel 模板文件");
+    try {
+      const result = await importPropertyWorkbook(file);
+      closeModal();
+      render();
+      alert(`导入完成：新增小区 ${result.createdCommunities} 个，新增房源 ${result.createdProperties} 套，更新房源 ${result.updatedProperties} 套。`);
+    } catch (error) {
+      alert(error.message || "导入失败，请检查模板格式");
+    }
+  };
+  bindCloseButtons();
+  showModal();
+}
+
+function downloadPropertyImportTemplate() {
+  const sampleRows = [
+    [
+      "滨江花园",
+      "河西片区",
+      "自营",
+      "主做两居室",
+      "8 栋 703",
+      "一室一厅",
+      54,
+      "待出租",
+      "",
+      2455,
+      2050,
+      today(),
+      today(),
+      "空调、冰箱、洗衣机",
+      "床、书桌、衣柜",
+      "采光好，待出租",
+    ],
+  ];
+  const html = propertyWorkbookHtml([PROPERTY_IMPORT_HEADERS, ...sampleRows]);
+  downloadHtmlExcel(html, `房产信息导入模板_${today()}.xls`);
+}
+
+async function importPropertyWorkbook(file) {
+  const html = await file.text();
+  const documentBody = new DOMParser().parseFromString(html, "text/html");
+  const rows = Array.from(documentBody.querySelectorAll("tr")).map((row) =>
+    Array.from(row.children).map((cell) => cell.textContent.trim()),
+  );
+  const headerIndex = rows.findIndex((row) => PROPERTY_IMPORT_HEADERS.every((header, index) => row[index] === header));
+  if (headerIndex < 0) {
+    throw new Error("没有找到正确的模板表头，请先下载并使用系统模板填写");
+  }
+  const dataRows = rows
+    .slice(headerIndex + 1)
+    .filter((row) => row.some((cell) => String(cell || "").trim()))
+    .map((row) => Object.fromEntries(PROPERTY_IMPORT_HEADERS.map((header, index) => [header, row[index] || ""])));
+  if (!dataRows.length) throw new Error("模板里没有可导入的房源数据");
+
+  let createdCommunities = 0;
+  let createdProperties = 0;
+  let updatedProperties = 0;
+  dataRows.forEach((row, index) => {
+    const communityName = row["小区名称"].trim();
+    const propertyName = row["房源名称"].trim();
+    if (!communityName || !propertyName) {
+      throw new Error(`第 ${index + headerIndex + 2} 行缺少小区名称或房源名称`);
+    }
+    let community = state.communities.find((item) => item.name === communityName);
+    if (!community) {
+      community = {
+        id: uid(),
+        name: communityName,
+        district: row["片区"].trim(),
+        manager: row["负责人/合作方式"].trim(),
+        note: row["小区备注"].trim(),
+      };
+      state.communities.push(community);
+      createdCommunities += 1;
+    } else {
+      community.district = row["片区"].trim() || community.district;
+      community.manager = row["负责人/合作方式"].trim() || community.manager;
+      community.note = row["小区备注"].trim() || community.note;
+    }
+
+    const importedProperty = {
+      communityId: community.id,
+      name: propertyName,
+      layout: row["户型"].trim(),
+      area: Number(row["面积㎡"] || 0),
+      status: normalizeImportStatus(row["出租状态"]),
+      tenant: row["租客"].trim(),
+      monthlyRent: Number(row["月租收入"] || 0),
+      landlordRent: Number(row["房东租金成本"] || 0),
+      rentDueDate: normalizeImportDate(row["下次交租日"]) || today(),
+      renovationDate: normalizeImportDate(row["装修时间"]),
+      appliances: row["房内家电"].trim(),
+      furniture: row["家具配置"].trim(),
+      note: row["房源备注"].trim(),
+    };
+    const existing = state.properties.find((item) => item.communityId === community.id && item.name === propertyName);
+    if (existing) {
+      Object.assign(existing, importedProperty);
+      updatedProperties += 1;
+    } else {
+      state.properties.push({ id: uid(), ...importedProperty });
+      createdProperties += 1;
+    }
+  });
+  state.selectedCommunityId = "all";
+  saveLocalState();
+  syncNow(false);
+  return { createdCommunities, createdProperties, updatedProperties };
+}
+
+function propertyWorkbookHtml(rows) {
+  const tableRows = rows
+    .map((row, rowIndex) => {
+      const cells = row
+        .map((cell) => {
+          const tag = rowIndex === 0 ? "th" : "td";
+          return `<${tag}>${excelCell(cell)}</${tag}>`;
+        })
+        .join("");
+      return `<tr>${cells}</tr>`;
+    })
+    .join("");
+  return `
+    <html>
+      <head>
+        <meta charset="UTF-8" />
+        <style>
+          table { border-collapse: collapse; font-family: "Microsoft YaHei", Arial, sans-serif; }
+          th { background: #207a5c; color: #ffffff; font-weight: 700; }
+          th, td { border: 1px solid #b7c5c0; padding: 8px 10px; mso-number-format:"\\@"; }
+        </style>
+      </head>
+      <body>
+        <table>${tableRows}</table>
+      </body>
+    </html>
+  `;
+}
+
+function downloadHtmlExcel(html, filename) {
+  const blob = new Blob([html], { type: "application/vnd.ms-excel;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function normalizeImportStatus(value) {
+  const text = String(value || "").trim();
+  return text === "已出租" || text.toLowerCase() === "rented" ? "rented" : "vacant";
+}
+
+function normalizeImportDate(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  const normalized = text.replaceAll("/", "-").replaceAll(".", "-");
+  const match = normalized.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (!match) return text;
+  return `${match[1]}-${match[2].padStart(2, "0")}-${match[3].padStart(2, "0")}`;
 }
 
 async function openUserAdminModal() {
