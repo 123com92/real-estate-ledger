@@ -1,11 +1,71 @@
-const STORAGE_KEY = "realEstateLedger.v1";
+const STORAGE_KEY = "realEstateLedger.v2";
+const LICENSE_STORAGE_KEY = "realEstateLedger.license.v1";
+const MACHINE_CODE_KEY = "realEstateLedger.machineCode.v1";
+const DESKTOP_MODE = Boolean(window.desktopApp);
+const STANDALONE_MODE =
+  DESKTOP_MODE || new URLSearchParams(window.location.search).get("standalone") === "1" || window.location.protocol === "file:";
+const TRIAL_LIMITS = { communities: 2, properties: 10, transactions: 30 };
+const PRODUCT_PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEAs8DBFmDQpTV4AvpBYFUfkcqSBejpcyUsxExj0/NN0kY=
+-----END PUBLIC KEY-----`;
 const MONEY_FORMATTER = new Intl.NumberFormat("zh-CN", {
   style: "currency",
   currency: "CNY",
   maximumFractionDigits: 0,
 });
+const TRANSACTION_CATEGORIES = {
+  income: [
+    "房租",
+    "中介费",
+    "水费",
+    "电费",
+    "燃气费",
+    "物业费",
+    "宽带费",
+    "停车费",
+    "保洁费",
+    "维修费",
+    "家电赔付",
+    "押金",
+    "管理费",
+    "违约金",
+    "其他收入",
+  ],
+  expense: [
+    "房东租金",
+    "中介费",
+    "水费",
+    "电费",
+    "燃气费",
+    "物业费",
+    "宽带费",
+    "停车费",
+    "保洁费",
+    "维修费",
+    "家电支出",
+    "家具支出",
+    "装修维护",
+    "押金退还",
+    "其他成本",
+  ],
+};
 
 const today = () => new Date().toISOString().slice(0, 10);
+const addDays = (offset) => {
+  const date = new Date();
+  date.setDate(date.getDate() + offset);
+  return date.toISOString().slice(0, 10);
+};
+const addMonths = (dateValue, months) => {
+  const source = dateValue ? new Date(dateValue) : new Date();
+  if (Number.isNaN(source.getTime())) return today();
+  const day = source.getDate();
+  const target = new Date(source);
+  target.setMonth(target.getMonth() + months, 1);
+  const lastDay = new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate();
+  target.setDate(Math.min(day, lastDay));
+  return target.toISOString().slice(0, 10);
+};
 const daysBetween = (date) => {
   const base = new Date(today());
   const target = new Date(date);
@@ -32,7 +92,7 @@ const defaultState = () => ({
       name: "云上公馆",
       district: "城东片区",
       manager: "联合代理",
-      note: "新房源较多，需关注空置期。",
+      note: "新房源较多，需要关注空置期。",
     },
   ],
   properties: [
@@ -82,7 +142,7 @@ const defaultState = () => ({
       renovationDate: "2025-08-10",
       appliances: "中央空调、冰箱、洗衣机、电视",
       furniture: "三张床、餐桌、沙发、书柜",
-      note: "房租已逾期，需电话确认付款时间。",
+      note: "房租已逾期，需要电话确认付款时间。",
     },
   ],
   transactions: [
@@ -139,34 +199,44 @@ const defaultState = () => ({
   ],
 });
 
-function addDays(offset) {
-  const date = new Date();
-  date.setDate(date.getDate() + offset);
-  return date.toISOString().slice(0, 10);
-}
-
-let state = loadState();
-
-function loadState() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : defaultState();
-  } catch {
-    return defaultState();
-  }
-}
-
-function saveState() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-}
+let state = loadLocalState();
+let currentUser = null;
+let authMode = "login";
+let syncTimer = null;
+let activeLicense = null;
+let machineCodeCache = "";
+let transactionFilters = {
+  startDate: "",
+  endDate: "",
+  type: "",
+  category: "",
+  keyword: "",
+};
 
 const els = {
+  authScreen: document.querySelector("#authScreen"),
+  appShell: document.querySelector("#appShell"),
+  authForm: document.querySelector("#authForm"),
+  authName: document.querySelector("#authName"),
+  authMessage: document.querySelector("#authMessage"),
+  loginTab: document.querySelector("#loginTab"),
+  registerTab: document.querySelector("#registerTab"),
+  currentUser: document.querySelector("#currentUser"),
+  licenseBtn: document.querySelector("#licenseBtn"),
+  userAdminBtn: document.querySelector("#userAdminBtn"),
   communityList: document.querySelector("#communityList"),
   communitySearch: document.querySelector("#communitySearch"),
   pageTitle: document.querySelector("#pageTitle"),
   communityHeading: document.querySelector("#communityHeading"),
   communitySummary: document.querySelector("#communitySummary"),
   propertyGrid: document.querySelector("#propertyGrid"),
+  transactionFilters: document.querySelector("#transactionFilters"),
+  transactionStartDate: document.querySelector("#transactionStartDate"),
+  transactionEndDate: document.querySelector("#transactionEndDate"),
+  transactionTypeFilter: document.querySelector("#transactionTypeFilter"),
+  transactionCategoryFilter: document.querySelector("#transactionCategoryFilter"),
+  transactionKeyword: document.querySelector("#transactionKeyword"),
+  transactionFilterSummary: document.querySelector("#transactionFilterSummary"),
   transactionTable: document.querySelector("#transactionTable"),
   rentAlerts: document.querySelector("#rentAlerts"),
   optimizationList: document.querySelector("#optimizationList"),
@@ -185,16 +255,367 @@ document.querySelector("#addPropertyBtn").addEventListener("click", () => openPr
 document.querySelector("#addTransactionBtn").addEventListener("click", () => openTransactionModal());
 document.querySelector("#closeModalBtn").addEventListener("click", closeModal);
 document.querySelector("#briefBtn").addEventListener("click", openBriefModal);
-document.querySelector("#demoBtn").addEventListener("click", () => {
-  if (!confirm("导入示例会覆盖当前本地数据，确定继续吗？")) return;
-  state = defaultState();
-  saveState();
-  render();
-});
+document.querySelector("#syncBtn").addEventListener("click", () => syncNow(true));
+document.querySelector("#exportFinanceBtn").addEventListener("click", openFinanceExportModal);
+document.querySelector("#logoutBtn").addEventListener("click", logout);
+document.querySelector("#demoBtn").addEventListener("click", openPropertyImportModal);
+document.querySelector("#clearTransactionFilters").addEventListener("click", clearTransactionFilters);
+els.licenseBtn.addEventListener("click", openLicenseModal);
+els.userAdminBtn.addEventListener("click", openUserAdminModal);
 els.communitySearch.addEventListener("input", renderCommunities);
+els.transactionFilters.addEventListener("input", updateTransactionFilters);
+els.transactionFilters.addEventListener("change", updateTransactionFilters);
+els.loginTab.addEventListener("click", () => setAuthMode("login"));
+els.registerTab.addEventListener("click", () => setAuthMode("register"));
+els.authForm.addEventListener("submit", submitAuth);
+els.communitySummary.addEventListener("click", (event) => {
+  const summaryButton = event.target.closest("[data-summary]");
+  if (!summaryButton) return;
+  openSummaryDetailModal(summaryButton.dataset.summary);
+});
+els.communitySummary.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  const summaryButton = event.target.closest("[data-summary]");
+  if (!summaryButton) return;
+  event.preventDefault();
+  openSummaryDetailModal(summaryButton.dataset.summary);
+});
 els.modalBackdrop.addEventListener("click", (event) => {
   if (event.target === els.modalBackdrop) closeModal();
 });
+
+window.setAuthMode = setAuthMode;
+window.submitAuth = submitAuth;
+window.openSummaryDetailModal = openSummaryDetailModal;
+setAuthMode("login");
+boot();
+
+async function boot() {
+  if (STANDALONE_MODE) {
+    if (DESKTOP_MODE) {
+      machineCodeCache = await window.desktopApp.getMachineCode();
+      state = normalizeState((await window.desktopApp.loadState()) || loadLocalState());
+    }
+    activeLicense = await loadVerifiedLicense();
+    currentUser = standaloneUser();
+    showApp();
+    if (!licenseStatus().ok) openLicenseModal();
+    return;
+  }
+  try {
+    const { user } = await api("/api/auth/me");
+    currentUser = user;
+    const payload = await api("/api/ledger");
+    state = normalizeState(payload.data || defaultState());
+    saveLocalState();
+    showApp();
+  } catch {
+    showAuth();
+  }
+}
+
+function showAuth() {
+  els.authScreen.hidden = false;
+  els.appShell.hidden = true;
+}
+
+function showApp() {
+  els.authScreen.hidden = true;
+  els.appShell.hidden = false;
+  const license = licenseStatus();
+  els.currentUser.textContent = STANDALONE_MODE
+    ? `${license.ok ? license.payload.customer : "单机试用版"} · ${license.ok ? "已授权" : "未授权"}`
+    : `${currentUser.name || currentUser.email} · ${currentUser.role === "admin" ? "管理员" : "成员"}`;
+  els.licenseBtn.hidden = !STANDALONE_MODE;
+  els.userAdminBtn.hidden = STANDALONE_MODE || currentUser.role !== "admin";
+  document.querySelector("#syncBtn").hidden = STANDALONE_MODE;
+  document.querySelector("#logoutBtn").textContent = STANDALONE_MODE ? "关闭" : "退出";
+  render();
+}
+
+function setAuthMode(mode) {
+  authMode = mode;
+  els.loginTab.classList.toggle("active", mode === "login");
+  els.registerTab.classList.toggle("active", mode === "register");
+  els.authName.closest(".form-field").hidden = mode === "login";
+  els.authForm.querySelector(".auth-submit").textContent = mode === "login" ? "登录" : "注册并进入";
+  els.authMessage.textContent = "";
+}
+
+async function submitAuth(event) {
+  event.preventDefault();
+  els.authMessage.textContent = "";
+  const submitButton = els.authForm.querySelector(".auth-submit");
+  if (submitButton.disabled) return;
+  const mode = authMode;
+  const originalText = mode === "login" ? "登录" : "注册并进入";
+  submitButton.disabled = true;
+  submitButton.textContent = mode === "login" ? "正在登录..." : "正在注册...";
+  const payload = Object.fromEntries(new FormData(els.authForm).entries());
+  try {
+    const { user } = await api(`/api/auth/${mode}`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    currentUser = user;
+    const ledger = await api("/api/ledger");
+    state = normalizeState(ledger.data || defaultState());
+    saveLocalState();
+    showApp();
+  } catch (error) {
+    els.authMessage.textContent = authErrorMessage(error.message, mode);
+  } finally {
+    submitButton.disabled = false;
+    submitButton.textContent = originalText;
+  }
+}
+
+function authErrorMessage(message, mode) {
+  const text = String(message || "").trim();
+  const messages = {
+    "Email already registered": "这个邮箱已经注册，请直接登录或换一个邮箱。",
+    "Invalid email or password": "邮箱或密码不正确，请检查后再登录。",
+    "Invalid email or password shorter than 8 characters": "请填写有效邮箱，密码至少 8 位。",
+    "Account disabled": "账号已停用，请联系管理员。",
+    "Please sign in first": "请先登录后再继续操作。",
+    "Admin permission required": "当前账号没有管理员权限。",
+    "User not found": "用户不存在或已被删除。",
+  };
+  if (messages[text]) return messages[text];
+  if (text.includes("already registered") || text.includes("这个邮箱已经注册")) {
+    return "这个邮箱已经注册，请直接登录或换一个邮箱。";
+  }
+  if (text.includes("Invalid email or password") || text.includes("邮箱或密码不正确")) {
+    return "邮箱或密码不正确，请检查后再登录。";
+  }
+  if (text.includes("DATABASE_URL")) {
+    return "数据库还没有配置，暂时无法完成登录或注册。";
+  }
+  if (text.includes("SESSION_SECRET")) {
+    return "服务端会话密钥未配置，请先补充环境变量。";
+  }
+  if (text.includes("timeout") || text.includes("Failed to fetch") || text.includes("Load failed")) {
+    return "服务暂时没有响应，请确认本地服务已启动后重试。";
+  }
+  return mode === "register" ? "注册失败，请检查信息后重试。" : "登录失败，请检查信息后重试。";
+}
+
+async function logout() {
+  if (STANDALONE_MODE) {
+    alert("单机版数据已保存在本机。可以直接关闭窗口。");
+    return;
+  }
+  await api("/api/auth/logout", { method: "POST" }).catch(() => {});
+  currentUser = null;
+  showAuth();
+}
+
+async function api(path, options = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new Error("request timeout")), 8000);
+  const response = await fetch(path, {
+    credentials: "include",
+    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+    signal: controller.signal,
+    ...options,
+  }).finally(() => clearTimeout(timer));
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body.error || "请求失败，请稍后再试");
+  return body;
+}
+
+function standaloneUser() {
+  return { id: "standalone", email: "", name: "单机版", role: "admin", status: "active" };
+}
+
+function getMachineCode() {
+  if (machineCodeCache) return machineCodeCache;
+  let code = localStorage.getItem(MACHINE_CODE_KEY);
+  if (!code) {
+    const bytes = new Uint8Array(10);
+    crypto.getRandomValues(bytes);
+    code = Array.from(bytes)
+      .map((item) => item.toString(16).padStart(2, "0"))
+      .join("")
+      .toUpperCase();
+    localStorage.setItem(MACHINE_CODE_KEY, code);
+  }
+  machineCodeCache = code;
+  return code;
+}
+
+function formatMachineCode(value) {
+  return String(value || "")
+    .replace(/[^A-Z0-9]/gi, "")
+    .toUpperCase()
+    .match(/.{1,4}/g)
+    ?.join("-") || "";
+}
+
+function licenseStatus() {
+  if (activeLicense?.ok) return activeLicense;
+  return { ok: false, reason: "未授权", payload: null };
+}
+
+async function loadVerifiedLicense() {
+  const licenseCode = DESKTOP_MODE ? await window.desktopApp.loadLicense() : localStorage.getItem(LICENSE_STORAGE_KEY);
+  if (!licenseCode) return null;
+  return verifyLicenseCode(licenseCode);
+}
+
+async function verifyLicenseCode(licenseCode) {
+  const [prefix, encodedPayload, signature] = String(licenseCode || "").trim().split(".");
+  if (prefix !== "REL1" || !encodedPayload || !signature) {
+    return { ok: false, reason: "授权码格式不正确" };
+  }
+  try {
+    const publicKey = await crypto.subtle.importKey(
+      "spki",
+      pemToArrayBuffer(PRODUCT_PUBLIC_KEY),
+      { name: "Ed25519" },
+      false,
+      ["verify"],
+    );
+    const validSignature = await crypto.subtle.verify(
+      { name: "Ed25519" },
+      publicKey,
+      base64urlToBytes(signature),
+      new TextEncoder().encode(encodedPayload),
+    );
+    if (!validSignature) return { ok: false, reason: "授权码签名无效" };
+    const payload = JSON.parse(new TextDecoder().decode(base64urlToBytes(encodedPayload)));
+    if (payload.machineCode !== getMachineCode()) return { ok: false, reason: "授权码不属于这台电脑", payload };
+    if (payload.expiresAt && new Date(payload.expiresAt).getTime() < Date.now()) {
+      return { ok: false, reason: "授权码已过期", payload };
+    }
+    return { ok: true, payload, licenseCode };
+  } catch (error) {
+    return { ok: false, reason: error.message || "授权码校验失败" };
+  }
+}
+
+function pemToArrayBuffer(pem) {
+  const base64 = pem.replace(/-----[^-]+-----/g, "").replace(/\s/g, "");
+  return base64ToBytes(base64).buffer;
+}
+
+function base64urlToBytes(value) {
+  return base64ToBytes(String(value).replace(/-/g, "+").replace(/_/g, "/"));
+}
+
+function base64ToBytes(value) {
+  const padded = value.padEnd(Math.ceil(value.length / 4) * 4, "=");
+  return Uint8Array.from(atob(padded), (char) => char.charCodeAt(0));
+}
+
+async function copyText(text) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+  document.execCommand("copy");
+  textarea.remove();
+}
+
+function standaloneLimit(kind) {
+  const license = licenseStatus();
+  const value = license.ok ? license.payload?.limits?.[kind] : TRIAL_LIMITS[kind];
+  return Number(value || 0) || Infinity;
+}
+
+function standaloneCount(kind) {
+  if (kind === "communities") return state.communities.length;
+  if (kind === "properties") return state.properties.length;
+  if (kind === "transactions") return state.transactions.length;
+  return 0;
+}
+
+function ensureStandaloneQuota(kind, addCount = 1) {
+  if (!STANDALONE_MODE) return true;
+  const limit = standaloneLimit(kind);
+  if (standaloneCount(kind) + addCount <= limit) return true;
+  openLicenseModal(`试用版已达到上限：${trialLimitLabel(kind)}。请输入授权码后继续使用完整功能。`);
+  return false;
+}
+
+function trialLimitLabel(kind) {
+  const labels = { communities: "小区数量", properties: "房源数量", transactions: "流水数量" };
+  return `${labels[kind] || "数据数量"} ${standaloneLimit(kind) === Infinity ? "不限" : `${standaloneLimit(kind)} 条`}`;
+}
+
+function loadLocalState() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return normalizeState(raw ? JSON.parse(raw) : defaultState());
+  } catch {
+    return defaultState();
+  }
+}
+
+function normalizeState(value) {
+  return normalizeTransactionSnapshots({
+    selectedCommunityId: value?.selectedCommunityId || "all",
+    communities: Array.isArray(value?.communities) ? value.communities : [],
+    properties: Array.isArray(value?.properties) ? value.properties : [],
+    transactions: Array.isArray(value?.transactions) ? value.transactions : [],
+  });
+}
+
+function normalizeTransactionSnapshots(value) {
+  const communities = value.communities || [];
+  const properties = value.properties || [];
+  return {
+    ...value,
+    transactions: (value.transactions || []).map((transaction) => {
+      const community = communities.find((item) => item.id === transaction.communityId);
+      const property = properties.find((item) => item.id === transaction.propertyId);
+      return {
+        ...transaction,
+        communitySnapshotId: transaction.communitySnapshotId || transaction.communityId || "",
+        propertySnapshotId: transaction.propertySnapshotId || transaction.propertyId || "",
+        communityName: transaction.communityName || community?.name || "",
+        propertyName: transaction.propertyName || property?.name || "",
+      };
+    }),
+  };
+}
+
+function saveLocalState() {
+  if (DESKTOP_MODE) {
+    window.desktopApp.saveState(state).catch((error) => console.error("保存 SQLite 失败", error));
+    return;
+  }
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
+
+function scheduleSync() {
+  if (STANDALONE_MODE) return;
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(() => syncNow(false), 450);
+}
+
+async function syncNow(showNotice) {
+  if (STANDALONE_MODE) {
+    saveLocalState();
+    if (showNotice) alert("单机版数据已保存到本机");
+    return;
+  }
+  try {
+    await api("/api/ledger", {
+      method: "PUT",
+      body: JSON.stringify({ data: state }),
+    });
+    if (showNotice) alert("数据已同步到 PostgreSQL");
+  } catch (error) {
+    if (showNotice) alert(error.message);
+  }
+}
 
 function selectedCommunity() {
   return state.communities.find((item) => item.id === state.selectedCommunityId);
@@ -209,8 +630,56 @@ function scopedTransactions() {
   const propertyIds = new Set(scopedProperties().map((item) => item.id));
   if (state.selectedCommunityId === "all") return state.transactions;
   return state.transactions.filter(
-    (item) => item.communityId === state.selectedCommunityId || propertyIds.has(item.propertyId),
+    (item) =>
+      item.communityId === state.selectedCommunityId ||
+      propertyIds.has(item.propertyId) ||
+      item.communitySnapshotId === state.selectedCommunityId,
   );
+}
+
+function transactionNames(item) {
+  const community = state.communities.find((c) => c.id === item.communityId);
+  const property = state.properties.find((p) => p.id === item.propertyId);
+  return {
+    communityName: community?.name || item.communityName || "-",
+    propertyName: property?.name || item.propertyName || "-",
+  };
+}
+
+function filteredTransactions() {
+  const keyword = transactionFilters.keyword.trim().toLowerCase();
+  return scopedTransactions().filter((item) => {
+    const { communityName, propertyName } = transactionNames(item);
+    const text = [item.date, item.category, item.note, communityName, propertyName].join(" ").toLowerCase();
+    return (
+      (!transactionFilters.startDate || item.date >= transactionFilters.startDate) &&
+      (!transactionFilters.endDate || item.date <= transactionFilters.endDate) &&
+      (!transactionFilters.type || item.type === transactionFilters.type) &&
+      (!transactionFilters.category || item.category === transactionFilters.category) &&
+      (!keyword || text.includes(keyword))
+    );
+  });
+}
+
+function updateTransactionFilters() {
+  transactionFilters = {
+    startDate: els.transactionStartDate.value,
+    endDate: els.transactionEndDate.value,
+    type: els.transactionTypeFilter.value,
+    category: els.transactionCategoryFilter.value,
+    keyword: els.transactionKeyword.value,
+  };
+  renderTransactions();
+}
+
+function clearTransactionFilters() {
+  transactionFilters = { startDate: "", endDate: "", type: "", category: "", keyword: "" };
+  els.transactionStartDate.value = "";
+  els.transactionEndDate.value = "";
+  els.transactionTypeFilter.value = "";
+  els.transactionCategoryFilter.value = "";
+  els.transactionKeyword.value = "";
+  renderTransactions();
 }
 
 function totals(transactions = scopedTransactions()) {
@@ -230,7 +699,8 @@ function render() {
   renderTransactions();
   renderAlerts();
   renderOptimization();
-  saveState();
+  saveLocalState();
+  if (currentUser) scheduleSync();
 }
 
 function renderCommunities() {
@@ -243,27 +713,37 @@ function renderCommunities() {
       return [community.id, { ...stat, count }];
     }),
   );
-  const filtered = state.communities.filter((item) =>
-    `${item.name} ${item.district}`.toLowerCase().includes(query),
-  );
+  const filtered = state.communities.filter((item) => `${item.name} ${item.district}`.toLowerCase().includes(query));
   const allStat = totals(state.transactions);
   const allButton = communityButton({
     id: "all",
     name: "全部小区",
     district: `${state.communities.length} 个小区 · ${state.properties.length} 套房源 · ${money(allStat.profit)}`,
   });
-  els.communityList.innerHTML = allButton + filtered.map((item) => {
-    const stat = communityStats.get(item.id);
-    return communityButton({
-      id: item.id,
-      name: item.name,
-      district: `${item.district || "未填写片区"} · ${stat.count} 套 · ${money(stat.profit)}`,
-    });
-  }).join("");
-  els.communityList.querySelectorAll("button").forEach((button) => {
+  els.communityList.innerHTML =
+    allButton +
+    filtered
+      .map((item) => {
+        const stat = communityStats.get(item.id);
+        return communityButton({
+          id: item.id,
+          name: item.name,
+          district: `${item.district || "未填写片区"} · ${stat.count} 套 · ${money(stat.profit)}`,
+          editable: true,
+        });
+      })
+      .join("");
+  els.communityList.querySelectorAll(".community-item").forEach((button) => {
     button.addEventListener("click", () => {
       state.selectedCommunityId = button.dataset.id;
       render();
+    });
+  });
+  els.communityList.querySelectorAll(".community-edit-button").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const community = state.communities.find((item) => item.id === button.dataset.id);
+      if (community) openCommunityModal(community);
     });
   });
 }
@@ -274,6 +754,11 @@ function communityButton(item) {
     <button class="community-item ${active}" type="button" data-id="${item.id}">
       <strong>${escapeHtml(item.name)}</strong>
       <span>${escapeHtml(item.district)}</span>
+      ${
+        item.editable
+          ? `<span class="community-edit-button" role="button" tabindex="0" title="编辑小区" aria-label="编辑小区" data-id="${item.id}">编辑</span>`
+          : ""
+      }
     </button>
   `;
 }
@@ -301,12 +786,15 @@ function renderProperties() {
   const rented = properties.filter((item) => item.status === "rented").length;
   const vacant = properties.filter((item) => item.status === "vacant").length;
   els.communitySummary.innerHTML = [
-    ["房源数量", `${properties.length} 套`],
-    ["已出租", `${rented} 套`],
-    ["待出租", `${vacant} 套`],
-    ["净利润", money(stat.profit)],
+    ["properties", "房源数量", `${properties.length} 套`],
+    ["rented", "已出租", `${rented} 套`],
+    ["vacant", "待出租", `${vacant} 套`],
+    ["profit", "净利润", money(stat.profit)],
   ]
-    .map(([label, value]) => `<div class="summary-chip"><span>${label}</span><strong>${value}</strong></div>`)
+    .map(
+      ([type, label, value]) =>
+        `<button class="summary-chip" type="button" data-summary="${type}" title="点击查看${label}明细" aria-label="查看${label}明细"><span>${label}</span><strong>${value}</strong></button>`,
+    )
     .join("");
 
   if (!properties.length) {
@@ -354,35 +842,40 @@ function renderProperties() {
     button.addEventListener("click", () => {
       const property = state.properties.find((item) => item.id === button.dataset.id);
       if (button.dataset.action === "detail") openPropertyModal(property);
-      if (button.dataset.action === "quick-income") openTransactionModal({
-        communityId: property.communityId,
-        propertyId: property.id,
-        type: "income",
-        category: "租金收入",
-        amount: property.monthlyRent,
-        date: today(),
-        note: `${property.name} 收租`,
-      });
+      if (button.dataset.action === "quick-income") {
+        openTransactionModal({
+          communityId: property.communityId,
+          propertyId: property.id,
+          type: "income",
+          category: "房租",
+          amount: property.monthlyRent,
+          date: today(),
+          note: `${property.name} 收租`,
+        });
+      }
     });
   });
 }
 
 function renderTransactions() {
-  const rows = scopedTransactions().slice().sort(byDateDesc);
+  const scopedRows = scopedTransactions();
+  renderTransactionCategoryFilter(scopedRows);
+  const rows = filteredTransactions().slice().sort(byDateDesc);
+  const stat = totals(rows);
+  els.transactionFilterSummary.textContent = `当前显示 ${rows.length} 条流水，收入 ${money(stat.income)}，成本 ${money(stat.expense)}，净利润 ${money(stat.profit)}`;
   if (!rows.length) {
-    els.transactionTable.innerHTML = `<tr><td colspan="6">暂无流水，点击“记一笔”添加收入或成本。</td></tr>`;
+    els.transactionTable.innerHTML = `<tr><td colspan="6">没有符合筛选条件的流水，可调整条件或点击“清空筛选”。</td></tr>`;
     return;
   }
   els.transactionTable.innerHTML = rows
     .map((item) => {
-      const community = state.communities.find((c) => c.id === item.communityId);
-      const property = state.properties.find((p) => p.id === item.propertyId);
+      const { communityName, propertyName } = transactionNames(item);
       return `
         <tr>
           <td>${escapeHtml(item.date)}</td>
           <td>${item.type === "income" ? "收入" : "成本"}</td>
           <td>${escapeHtml(item.category)}</td>
-          <td>${escapeHtml(community?.name || "-")} / ${escapeHtml(property?.name || "-")}</td>
+          <td>${escapeHtml(communityName)} / ${escapeHtml(propertyName)}</td>
           <td class="${item.type === "income" ? "amount-income" : "amount-expense"}">
             ${item.type === "income" ? "+" : "-"}${money(item.amount)}
           </td>
@@ -391,6 +884,27 @@ function renderTransactions() {
       `;
     })
     .join("");
+}
+
+function renderTransactionCategoryFilter(rows) {
+  const current = els.transactionCategoryFilter.value;
+  const categories = Array.from(
+    new Set([
+      ...TRANSACTION_CATEGORIES.income,
+      ...TRANSACTION_CATEGORIES.expense,
+      ...rows.map((item) => item.category).filter(Boolean),
+    ]),
+  );
+  els.transactionCategoryFilter.innerHTML = [
+    `<option value="">全部分类</option>`,
+    ...categories.map(
+      (item) => `<option value="${escapeAttr(item)}" ${item === current ? "selected" : ""}>${escapeHtml(item)}</option>`,
+    ),
+  ].join("");
+  if (current && !categories.includes(current)) {
+    els.transactionCategoryFilter.value = "";
+    transactionFilters.category = "";
+  }
 }
 
 function rentAlertItems() {
@@ -467,11 +981,11 @@ function openCommunityModal(community = null) {
     <div class="form-grid">
       ${field("小区名称", "name", community?.name || "", "text", "full")}
       ${field("片区", "district", community?.district || "")}
-      ${field("负责人/合作方式", "manager", community?.manager || "")}
+      ${field("负责人 / 合作方式", "manager", community?.manager || "")}
       ${textArea("备注", "note", community?.note || "", "full")}
     </div>
     <div class="form-actions">
-      <span></span>
+      ${isEdit ? `<button class="danger-button" type="button" data-delete-community="${community.id}">删除小区</button>` : "<span></span>"}
       <div class="right">
         <button class="secondary-button" type="button" data-close>取消</button>
         <button class="primary-button" type="submit">保存</button>
@@ -484,6 +998,7 @@ function openCommunityModal(community = null) {
     if (!data.name) return alert("请填写小区名称");
     if (isEdit) Object.assign(community, data);
     else {
+      if (!ensureStandaloneQuota("communities")) return;
       const created = { id: uid(), ...data };
       state.communities.push(created);
       state.selectedCommunityId = created.id;
@@ -491,8 +1006,67 @@ function openCommunityModal(community = null) {
     closeModal();
     render();
   };
+  const deleteBtn = els.modalForm.querySelector("[data-delete-community]");
+  if (deleteBtn) {
+    deleteBtn.addEventListener("click", () => openCommunityDeleteConfirm(community));
+  }
   bindCloseButtons();
   showModal();
+}
+
+function openCommunityDeleteConfirm(community) {
+  const properties = state.properties.filter((item) => item.communityId === community.id);
+  const propertyIds = new Set(properties.map((item) => item.id));
+  const transactions = state.transactions.filter(
+    (item) => item.communityId === community.id || propertyIds.has(item.propertyId),
+  );
+  els.modalTitle.textContent = "确认删除小区";
+  els.modalForm.innerHTML = `
+    <div class="empty-state">
+      删除后将移除该小区下的 ${properties.length} 套房源。${transactions.length} 条相关收支流水会保留为历史财务记录，并保存当时的小区和房源名称。
+    </div>
+    <div class="form-grid">
+      <div class="form-field full">
+        <label for="confirmCommunityName">请输入小区名称确认删除：${escapeHtml(community.name)}</label>
+        <input id="confirmCommunityName" name="confirmCommunityName" autocomplete="off" />
+      </div>
+    </div>
+    <div class="form-actions">
+      <button class="secondary-button" type="button" id="backToCommunityEditBtn">返回编辑</button>
+      <div class="right">
+        <button class="secondary-button" type="button" data-close>取消</button>
+        <button class="danger-button" type="submit">确认删除</button>
+      </div>
+    </div>
+  `;
+  document.querySelector("#backToCommunityEditBtn").addEventListener("click", () => openCommunityModal(community));
+  els.modalForm.onsubmit = (event) => {
+    event.preventDefault();
+    const confirmName = formData().confirmCommunityName.trim();
+    if (confirmName !== community.name) {
+      alert("小区名称不匹配，未执行删除");
+      return;
+    }
+    state.communities = state.communities.filter((item) => item.id !== community.id);
+    state.properties = state.properties.filter((item) => item.communityId !== community.id);
+    state.transactions = state.transactions.map((item) => {
+      if (item.communityId !== community.id && !propertyIds.has(item.propertyId)) return item;
+      const property = properties.find((propertyItem) => propertyItem.id === item.propertyId);
+      return {
+        ...item,
+        communitySnapshotId: item.communitySnapshotId || community.id,
+        propertySnapshotId: item.propertySnapshotId || item.propertyId,
+        communityName: item.communityName || community.name,
+        propertyName: item.propertyName || property?.name || "",
+        communityId: "",
+        propertyId: "",
+      };
+    });
+    state.selectedCommunityId = "all";
+    closeModal();
+    render();
+  };
+  bindCloseButtons();
 }
 
 function openPropertyModal(property = null) {
@@ -530,19 +1104,94 @@ function openPropertyModal(property = null) {
     const data = normalizePropertyData(formData());
     if (!data.name) return alert("请填写房源名称");
     if (isEdit) Object.assign(property, data);
-    else state.properties.push({ id: uid(), ...data });
+    else {
+      if (!ensureStandaloneQuota("properties")) return;
+      state.properties.push({ id: uid(), ...data });
+    }
     closeModal();
     render();
   };
   const deleteBtn = els.modalForm.querySelector("[data-delete-property]");
   if (deleteBtn) {
     deleteBtn.addEventListener("click", () => {
-      if (!confirm("确定删除这个房源吗？关联流水会保留，但房源名称将无法匹配。")) return;
+      if (!confirm("确定删除这个房源吗？相关收支流水会保留为历史财务记录。")) return;
+      const community = state.communities.find((item) => item.id === property.communityId);
+      state.transactions = state.transactions.map((item) => {
+        if (item.propertyId !== property.id) return item;
+        return {
+          ...item,
+          communitySnapshotId: item.communitySnapshotId || property.communityId,
+          propertySnapshotId: item.propertySnapshotId || property.id,
+          communityName: item.communityName || community?.name || "",
+          propertyName: item.propertyName || property.name,
+          propertyId: "",
+        };
+      });
       state.properties = state.properties.filter((item) => item.id !== property.id);
       closeModal();
       render();
     });
   }
+  bindCloseButtons();
+  showModal();
+}
+
+function openLicenseModal(message = "") {
+  const license = licenseStatus();
+  const machineCode = getMachineCode();
+  els.modalTitle.textContent = "单机版授权";
+  els.modalForm.innerHTML = `
+    ${message ? `<div class="empty-state">${escapeHtml(message)}</div>` : ""}
+    <div class="license-panel">
+      <div>
+        <span>授权状态</span>
+        <strong>${license.ok ? "已授权" : "试用版"}</strong>
+        <p>${license.ok ? `授权客户：${escapeHtml(license.payload.customer)}` : "当前可试用少量数据，输入授权码后解锁完整功能。"}</p>
+      </div>
+      <div>
+        <span>本机机器码</span>
+        <strong>${formatMachineCode(machineCode)}</strong>
+        <p>把这串机器码发给销售人员，用它生成专属授权码。</p>
+      </div>
+    </div>
+    <div class="license-limits">
+      <span>小区：${state.communities.length} / ${trialLimitLabel("communities").replace("小区数量 ", "")}</span>
+      <span>房源：${state.properties.length} / ${trialLimitLabel("properties").replace("房源数量 ", "")}</span>
+      <span>流水：${state.transactions.length} / ${trialLimitLabel("transactions").replace("流水数量 ", "")}</span>
+    </div>
+    <div class="form-grid">
+      <div class="form-field full">
+        <label for="licenseCode">授权码</label>
+        <textarea id="licenseCode" name="licenseCode" placeholder="把 REL1 开头的授权码粘贴到这里">${escapeHtml(activeLicense?.licenseCode || (!DESKTOP_MODE ? localStorage.getItem(LICENSE_STORAGE_KEY) || "" : ""))}</textarea>
+      </div>
+      <p class="form-message full" id="licenseMessage"></p>
+    </div>
+    <div class="form-actions">
+      <button class="secondary-button" type="button" id="copyMachineCodeBtn">复制机器码</button>
+      <div class="right">
+        <button class="secondary-button" type="button" data-close>关闭</button>
+        <button class="primary-button" type="submit">保存授权</button>
+      </div>
+    </div>
+  `;
+  document.querySelector("#copyMachineCodeBtn").addEventListener("click", async () => {
+    await copyText(formatMachineCode(machineCode));
+    document.querySelector("#licenseMessage").textContent = "机器码已复制。";
+  });
+  els.modalForm.onsubmit = async (event) => {
+    event.preventDefault();
+    const licenseCode = formData().licenseCode.trim();
+    const result = await verifyLicenseCode(licenseCode);
+    if (!result.ok) {
+      document.querySelector("#licenseMessage").textContent = result.reason;
+      return;
+    }
+    activeLicense = result;
+    if (DESKTOP_MODE) await window.desktopApp.saveLicense(licenseCode);
+    else localStorage.setItem(LICENSE_STORAGE_KEY, licenseCode);
+    closeModal();
+    showApp();
+  };
   bindCloseButtons();
   showModal();
 }
@@ -554,13 +1203,25 @@ function openTransactionModal(seed = {}) {
   const propertyOptions = state.properties
     .filter((item) => item.communityId === communityId)
     .map((item) => [item.id, item.name]);
+  const selectedProperty = state.properties.find((item) => item.id === seed.propertyId);
+  const propertySearchValue = selectedProperty ? selectedProperty.name : "";
+  const typeValue = seed.type || "income";
+  const categoryOptions = TRANSACTION_CATEGORIES[typeValue];
+  const categoryValue = categoryOptions.includes(seed.category) ? seed.category : categoryOptions[0];
   els.modalTitle.textContent = "新增收支流水";
   els.modalForm.innerHTML = `
     <div class="form-grid">
-      ${selectField("类型", "type", [["income", "收入"], ["expense", "成本"]], seed.type || "income")}
-      ${field("分类", "category", seed.category || "租金收入")}
+      ${selectField("类型", "type", [["income", "收入"], ["expense", "成本"]], typeValue)}
+      ${selectField("分类", "category", categoryOptions.map((item) => [item, item]), categoryValue)}
       ${selectField("所属小区", "communityId", state.communities.map((item) => [item.id, item.name]), communityId)}
-      ${selectField("关联房源", "propertyId", [["", "不关联"], ...propertyOptions], seed.propertyId || "")}
+      <div class="form-field">
+        <label for="propertySearch">关联房源</label>
+        <input id="propertySearch" name="propertySearch" list="propertyOptions" value="${escapeAttr(propertySearchValue)}" placeholder="输入房源名快速查找，不关联可留空" autocomplete="off" />
+        <input id="propertyId" name="propertyId" type="hidden" value="${escapeAttr(seed.propertyId || "")}" />
+        <datalist id="propertyOptions">
+          ${propertyOptions.map(([optionValue, text]) => `<option value="${escapeAttr(text)}" data-id="${escapeAttr(optionValue)}"></option>`).join("")}
+        </datalist>
+      </div>
       ${field("金额", "amount", seed.amount || "", "number")}
       ${field("日期", "date", seed.date || today(), "date")}
       ${textArea("备注", "note", seed.note || "", "full")}
@@ -569,7 +1230,8 @@ function openTransactionModal(seed = {}) {
       <span></span>
       <div class="right">
         <button class="secondary-button" type="button" data-close>取消</button>
-        <button class="primary-button" type="submit">保存</button>
+        <button class="secondary-button" type="submit" name="submitAction" value="save-add" title="保存这一笔，然后清空金额和备注，继续录入下一笔。">保存并新增</button>
+        <button class="primary-button" type="submit" name="submitAction" value="save">保存</button>
       </div>
     </div>
   `;
@@ -578,15 +1240,92 @@ function openTransactionModal(seed = {}) {
     const current = formData();
     openTransactionModal({ ...current, communityId: communitySelect.value, propertyId: "" });
   });
+  const typeSelect = els.modalForm.querySelector('[name="type"]');
+  const propertySearch = els.modalForm.querySelector('[name="propertySearch"]');
+  const propertyIdInput = els.modalForm.querySelector('[name="propertyId"]');
+  const categoryInput = els.modalForm.querySelector('[name="category"]');
+  const amountInput = els.modalForm.querySelector('[name="amount"]');
+  const dateInput = els.modalForm.querySelector('[name="date"]');
+  const resolvePropertyId = () => {
+    const matched = state.properties.find(
+      (item) => item.communityId === communitySelect.value && item.name === propertySearch.value.trim(),
+    );
+    propertyIdInput.value = matched ? matched.id : "";
+    return matched;
+  };
+  const refreshCategories = () => {
+    const options = TRANSACTION_CATEGORIES[typeSelect.value];
+    const currentCategory = categoryInput.value;
+    categoryInput.innerHTML = options
+      .map(
+        (item) =>
+          `<option value="${escapeAttr(item)}" ${item === currentCategory ? "selected" : ""}>${escapeHtml(item)}</option>`,
+      )
+      .join("");
+    if (!options.includes(currentCategory)) categoryInput.value = options[0];
+  };
+  const syncRentDueDate = () => {
+    const property = resolvePropertyId();
+    const amount = Number(amountInput.value || 0);
+    const monthlyRent = Number(property?.monthlyRent || 0);
+    const isRentIncome =
+      typeSelect.value === "income" &&
+      property &&
+      monthlyRent > 0 &&
+      String(categoryInput.value || "").includes("租");
+    if (!isRentIncome || amount < monthlyRent) return;
+    const monthsPaid = Math.max(1, Math.floor(amount / monthlyRent + 0.000001));
+    dateInput.value = addMonths(property.rentDueDate || today(), monthsPaid);
+  };
+  typeSelect.addEventListener("change", () => {
+    refreshCategories();
+    syncRentDueDate();
+  });
+  [propertySearch, categoryInput, amountInput].forEach((input) => {
+    input.addEventListener("input", syncRentDueDate);
+    input.addEventListener("change", syncRentDueDate);
+  });
+  syncRentDueDate();
   els.modalForm.onsubmit = (event) => {
     event.preventDefault();
+    const submitAction = event.submitter?.value || "save";
+    resolvePropertyId();
     const data = formData();
     if (!data.amount || Number(data.amount) <= 0) return alert("请填写有效金额");
+    const property = state.properties.find((item) => item.id === data.propertyId);
+    const community = state.communities.find((item) => item.id === data.communityId);
+    if (
+      property &&
+      data.type === "income" &&
+      String(data.category || "").includes("租") &&
+      Number(data.amount || 0) >= Number(property.monthlyRent || 0)
+    ) {
+      property.rentDueDate = data.date;
+      property.status = "rented";
+    }
+    if (!ensureStandaloneQuota("transactions")) return;
     state.transactions.push({
       id: uid(),
       ...data,
+      communitySnapshotId: data.communityId,
+      propertySnapshotId: data.propertyId,
+      communityName: community?.name || "",
+      propertyName: property?.name || "",
       amount: Number(data.amount),
     });
+    if (submitAction === "save-add") {
+      render();
+      openTransactionModal({
+        type: data.type,
+        category: data.category,
+        communityId: data.communityId,
+        propertyId: data.propertyId,
+        amount: "",
+        date: today(),
+        note: "",
+      });
+      return;
+    }
     closeModal();
     render();
   };
@@ -599,7 +1338,7 @@ function openBriefModal() {
   const stat = totals();
   const vacant = scopedProperties().filter((item) => item.status === "vacant");
   const lines = [
-    `${today()} 每日汇总简报`,
+    `${today()} 每日经营简报`,
     "",
     `收入：${money(stat.income)}，成本：${money(stat.expense)}，净利润：${money(stat.profit)}。`,
     `当前范围共有 ${scopedProperties().length} 套房源，其中待出租 ${vacant.length} 套。`,
@@ -607,10 +1346,10 @@ function openBriefModal() {
     alerts.length ? "待交房租提醒：" : "待交房租提醒：7 天内暂无到期房源。",
     ...alerts.map((property) => {
       const community = state.communities.find((item) => item.id === property.communityId);
-      return `- ${community?.name || ""} ${property.name}：${property.diff < 0 ? `逾期 ${Math.abs(property.diff)} 天` : `${property.diff} 天后到期`}，金额 ${money(property.monthlyRent)}，租客 ${property.tenant || "未填写"}`;
+      return `- ${community?.name || ""} ${property.name}，${property.diff < 0 ? `逾期 ${Math.abs(property.diff)} 天` : `${property.diff} 天后到期`}，金额 ${money(property.monthlyRent)}，租客 ${property.tenant || "未填写"}`;
     }),
   ];
-  els.modalTitle.textContent = "今日汇总简报";
+  els.modalTitle.textContent = "今日经营简报";
   els.modalForm.innerHTML = `
     <div class="brief-text">${escapeHtml(lines.join("\n"))}</div>
     <div class="form-actions">
@@ -622,11 +1361,589 @@ function openBriefModal() {
     </div>
   `;
   document.querySelector("#copyBriefBtn").addEventListener("click", async () => {
-    await navigator.clipboard.writeText(lines.join("\n"));
+    await copyText(lines.join("\n"));
     alert("简报已复制");
   });
   bindCloseButtons();
   showModal();
+}
+
+function openSummaryDetailModal(type) {
+  const properties = scopedProperties();
+  const transactions = scopedTransactions().slice().sort(byDateDesc);
+  const titles = {
+    properties: "全部房源明细",
+    rented: "已出租房源",
+    vacant: "待出租房源",
+    profit: "净利润明细",
+  };
+  els.modalTitle.textContent = titles[type] || "明细";
+  if (type === "profit") {
+    const stat = totals(transactions);
+    els.modalForm.innerHTML = `
+      <div class="community-summary detail-summary">
+        <div class="summary-chip static"><span>收入合计</span><strong>${money(stat.income)}</strong></div>
+        <div class="summary-chip static"><span>成本合计</span><strong>${money(stat.expense)}</strong></div>
+        <div class="summary-chip static"><span>净利润</span><strong>${money(stat.profit)}</strong></div>
+        <div class="summary-chip static"><span>流水数量</span><strong>${transactions.length} 条</strong></div>
+      </div>
+      ${categoryProfitTable(transactions)}
+      ${transactionDetailTable(transactions)}
+      <div class="form-actions">
+        <span></span>
+        <div class="right"><button class="secondary-button" type="button" data-close>关闭</button></div>
+      </div>
+    `;
+  } else {
+    const filtered =
+      type === "rented"
+        ? properties.filter((item) => item.status === "rented")
+        : type === "vacant"
+          ? properties.filter((item) => item.status === "vacant")
+          : properties;
+    els.modalForm.innerHTML = `
+      <div class="detail-card-grid">
+        ${
+          filtered.length
+            ? filtered.map(propertyDetailCard).join("")
+            : `<div class="empty-state">当前范围没有对应房源。</div>`
+        }
+      </div>
+      <div class="form-actions">
+        <span></span>
+        <div class="right"><button class="secondary-button" type="button" data-close>关闭</button></div>
+      </div>
+    `;
+  }
+  bindCloseButtons();
+  showModal();
+}
+
+function propertyDetailCard(property) {
+  const community = state.communities.find((item) => item.id === property.communityId);
+  const diff = daysBetween(property.rentDueDate);
+  const overdue = property.status === "rented" && diff < 0;
+  const status = overdue ? "overdue" : property.status;
+  const statusText = overdue ? "房租逾期" : property.status === "rented" ? "已出租" : "待出租";
+  const dueText =
+    property.status === "rented"
+      ? diff < 0
+        ? `逾期 ${Math.abs(diff)} 天`
+        : `${property.rentDueDate} 交租`
+      : "当前空置";
+  return `
+    <article class="property-card ${status}">
+      <div>
+        <h4>${escapeHtml(property.name)}</h4>
+        <p>${escapeHtml(community?.name || "历史房源")} · ${escapeHtml(property.layout || "未填户型")} · ${property.area || 0}㎡</p>
+      </div>
+      <div class="property-meta">
+        <span class="tag ${status}">${statusText}</span>
+        <span class="tag neutral">${escapeHtml(dueText)}</span>
+      </div>
+      <p>月租 ${money(property.monthlyRent)} · 房东成本 ${money(property.landlordRent)}</p>
+      <p>租客 ${escapeHtml(property.tenant || "未填写")}</p>
+    </article>
+  `;
+}
+
+function categoryProfitTable(transactions) {
+  if (!transactions.length) return "";
+  const rows = Object.values(
+    transactions.reduce((map, item) => {
+      const category = item.category || "未分类";
+      if (!map[category]) map[category] = { category, income: 0, expense: 0 };
+      map[category][item.type === "income" ? "income" : "expense"] += Number(item.amount || 0);
+      return map;
+    }, {}),
+  )
+    .map((item) => ({ ...item, profit: item.income - item.expense }))
+    .sort((a, b) => Math.abs(b.profit) - Math.abs(a.profit));
+
+  return `
+    <div class="table-wrap detail-table">
+      <table>
+        <thead>
+          <tr>
+            <th>分类</th>
+            <th>收入</th>
+            <th>成本</th>
+            <th>利润</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows
+            .map(
+              (item) => `
+                <tr>
+                  <td>${escapeHtml(item.category)}</td>
+                  <td>${money(item.income)}</td>
+                  <td>${money(item.expense)}</td>
+                  <td class="${item.profit < 0 ? "negative" : "positive"}">${money(item.profit)}</td>
+                </tr>
+              `,
+            )
+            .join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function transactionDetailTable(transactions) {
+  if (!transactions.length) return `<div class="empty-state">当前范围没有收支流水。</div>`;
+  return `
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>日期</th>
+            <th>类型</th>
+            <th>分类</th>
+            <th>小区 / 房源</th>
+            <th>金额</th>
+            <th>备注</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${transactions
+            .map((item) => {
+              const community = state.communities.find((c) => c.id === item.communityId);
+              const property = state.properties.find((p) => p.id === item.propertyId);
+              const communityName = community?.name || item.communityName || "-";
+              const propertyName = property?.name || item.propertyName || "-";
+              return `
+                <tr>
+                  <td>${escapeHtml(item.date)}</td>
+                  <td>${item.type === "income" ? "收入" : "成本"}</td>
+                  <td>${escapeHtml(item.category)}</td>
+                  <td>${escapeHtml(communityName)} / ${escapeHtml(propertyName)}</td>
+                  <td class="${item.type === "income" ? "amount-income" : "amount-expense"}">${item.type === "income" ? "+" : "-"}${money(item.amount)}</td>
+                  <td>${escapeHtml(item.note || "")}</td>
+                </tr>
+              `;
+            })
+            .join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function openFinanceExportModal() {
+  const dates = state.transactions.map((item) => item.date).filter(Boolean).sort();
+  const start = dates[0] || today();
+  const end = dates[dates.length - 1] || today();
+  els.modalTitle.textContent = "财务数据导出";
+  els.modalForm.innerHTML = `
+    <div class="form-grid">
+      ${field("开始日期", "startDate", start, "date")}
+      ${field("结束日期", "endDate", end, "date")}
+    </div>
+    <div class="empty-state">将按日期范围导出当前账号的收支流水，文件可用 Excel 直接打开。</div>
+    <div class="form-actions">
+      <span></span>
+      <div class="right">
+        <button class="secondary-button" type="button" data-close>取消</button>
+        <button class="primary-button" type="submit">导出 Excel</button>
+      </div>
+    </div>
+  `;
+  els.modalForm.onsubmit = (event) => {
+    event.preventDefault();
+    const { startDate, endDate } = formData();
+    if (!startDate || !endDate) return alert("请选择开始日期和结束日期");
+    if (startDate > endDate) return alert("开始日期不能晚于结束日期");
+    exportFinanceExcel(startDate, endDate);
+    closeModal();
+  };
+  bindCloseButtons();
+  showModal();
+}
+
+function exportFinanceExcel(startDate, endDate) {
+  const rows = state.transactions
+    .filter((item) => item.date >= startDate && item.date <= endDate)
+    .slice()
+    .sort(byDateDesc)
+    .map((item) => {
+      const community = state.communities.find((communityItem) => communityItem.id === item.communityId);
+      const property = state.properties.find((propertyItem) => propertyItem.id === item.propertyId);
+      return {
+        date: item.date,
+        type: item.type === "income" ? "收入" : "成本",
+        category: item.category || "",
+        community: community?.name || item.communityName || "",
+        property: property?.name || item.propertyName || "",
+        amount: Number(item.amount || 0),
+        signedAmount: item.type === "income" ? Number(item.amount || 0) : -Number(item.amount || 0),
+        note: item.note || "",
+      };
+    });
+  if (!rows.length) {
+    alert("所选日期范围内没有可导出的财务流水");
+    return;
+  }
+  const income = rows.filter((item) => item.signedAmount > 0).reduce((sum, item) => sum + item.amount, 0);
+  const expense = rows.filter((item) => item.signedAmount < 0).reduce((sum, item) => sum + item.amount, 0);
+  const tableRows = rows
+    .map(
+      (item) => `
+        <tr>
+          <td>${excelCell(item.date)}</td>
+          <td>${excelCell(item.type)}</td>
+          <td>${excelCell(item.category)}</td>
+          <td>${excelCell(item.community)}</td>
+          <td>${excelCell(item.property)}</td>
+          <td style="mso-number-format:'0.00';">${item.amount}</td>
+          <td style="mso-number-format:'0.00';">${item.signedAmount}</td>
+          <td>${excelCell(item.note)}</td>
+        </tr>
+      `,
+    )
+    .join("");
+  const html = `
+    <html>
+      <head>
+        <meta charset="UTF-8" />
+        <style>
+          table { border-collapse: collapse; font-family: "Microsoft YaHei", Arial, sans-serif; }
+          th { background: #207a5c; color: #ffffff; font-weight: 700; }
+          th, td { border: 1px solid #b7c5c0; padding: 8px 10px; }
+          .summary th { background: #d8b15f; color: #16201f; }
+        </style>
+      </head>
+      <body>
+        <table class="summary">
+          <tr><th colspan="2">房产中介经营记账本 - 财务数据导出</th></tr>
+          <tr><td>开始日期</td><td>${excelCell(startDate)}</td></tr>
+          <tr><td>结束日期</td><td>${excelCell(endDate)}</td></tr>
+          <tr><td>收入合计</td><td>${income}</td></tr>
+          <tr><td>成本合计</td><td>${expense}</td></tr>
+          <tr><td>净额</td><td>${income - expense}</td></tr>
+        </table>
+        <br />
+        <table>
+          <thead>
+            <tr>
+              <th>日期</th>
+              <th>类型</th>
+              <th>分类</th>
+              <th>小区</th>
+              <th>房源</th>
+              <th>金额</th>
+              <th>收入/成本净额</th>
+              <th>备注</th>
+            </tr>
+          </thead>
+          <tbody>${tableRows}</tbody>
+        </table>
+      </body>
+    </html>
+  `;
+  const blob = new Blob([html], { type: "application/vnd.ms-excel;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `财务数据_${startDate}_${endDate}.xls`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function excelCell(value = "") {
+  return escapeHtml(value).replace(/\n/g, "<br />");
+}
+
+const PROPERTY_IMPORT_HEADERS = [
+  "小区名称",
+  "片区",
+  "负责人/合作方式",
+  "小区备注",
+  "房源名称",
+  "户型",
+  "面积㎡",
+  "出租状态",
+  "租客",
+  "月租收入",
+  "房东租金成本",
+  "下次交租日",
+  "装修时间",
+  "房内家电",
+  "家具配置",
+  "房源备注",
+];
+
+function openPropertyImportModal() {
+  els.modalTitle.textContent = "导入房产信息";
+  els.modalForm.innerHTML = `
+    <div class="empty-state">
+      先下载 Excel 模板，按表头填写小区和房源信息，再选择填好的模板导入。系统会按“小区名称 + 房源名称”新增或更新房源，不会清空现有数据。
+    </div>
+    <div class="form-grid">
+      <div class="form-field full">
+        <label for="propertyImportFile">选择已填写的模板文件</label>
+        <input id="propertyImportFile" name="propertyImportFile" type="file" accept=".xls,.html,.htm" />
+      </div>
+    </div>
+    <div class="form-actions">
+      <button class="secondary-button" type="button" id="downloadPropertyTemplateBtn">下载 Excel 模板</button>
+      <div class="right">
+        <button class="secondary-button" type="button" data-close>取消</button>
+        <button class="primary-button" type="submit">导入房产信息</button>
+      </div>
+    </div>
+  `;
+  document.querySelector("#downloadPropertyTemplateBtn").addEventListener("click", downloadPropertyImportTemplate);
+  els.modalForm.onsubmit = async (event) => {
+    event.preventDefault();
+    const file = document.querySelector("#propertyImportFile").files[0];
+    if (!file) return alert("请先选择填写好的 Excel 模板文件");
+    try {
+      const result = await importPropertyWorkbook(file);
+      closeModal();
+      render();
+      alert(`导入完成：新增小区 ${result.createdCommunities} 个，新增房源 ${result.createdProperties} 套，更新房源 ${result.updatedProperties} 套。`);
+    } catch (error) {
+      alert(error.message || "导入失败，请检查模板格式");
+    }
+  };
+  bindCloseButtons();
+  showModal();
+}
+
+function downloadPropertyImportTemplate() {
+  const sampleRows = [
+    [
+      "滨江花园",
+      "河西片区",
+      "自营",
+      "主做两居室",
+      "8 栋 703",
+      "一室一厅",
+      54,
+      "待出租",
+      "",
+      2455,
+      2050,
+      today(),
+      today(),
+      "空调、冰箱、洗衣机",
+      "床、书桌、衣柜",
+      "采光好，待出租",
+    ],
+  ];
+  const html = propertyWorkbookHtml([PROPERTY_IMPORT_HEADERS, ...sampleRows]);
+  downloadHtmlExcel(html, `房产信息导入模板_${today()}.xls`);
+}
+
+async function importPropertyWorkbook(file) {
+  const html = await file.text();
+  const documentBody = new DOMParser().parseFromString(html, "text/html");
+  const rows = Array.from(documentBody.querySelectorAll("tr")).map((row) =>
+    Array.from(row.children).map((cell) => cell.textContent.trim()),
+  );
+  const headerIndex = rows.findIndex((row) => PROPERTY_IMPORT_HEADERS.every((header, index) => row[index] === header));
+  if (headerIndex < 0) {
+    throw new Error("没有找到正确的模板表头，请先下载并使用系统模板填写");
+  }
+  const dataRows = rows
+    .slice(headerIndex + 1)
+    .filter((row) => row.some((cell) => String(cell || "").trim()))
+    .map((row) => Object.fromEntries(PROPERTY_IMPORT_HEADERS.map((header, index) => [header, row[index] || ""])));
+  if (!dataRows.length) throw new Error("模板里没有可导入的房源数据");
+
+  let createdCommunities = 0;
+  let createdProperties = 0;
+  let updatedProperties = 0;
+  dataRows.forEach((row, index) => {
+    const communityName = row["小区名称"].trim();
+    const propertyName = row["房源名称"].trim();
+    if (!communityName || !propertyName) {
+      throw new Error(`第 ${index + headerIndex + 2} 行缺少小区名称或房源名称`);
+    }
+    let community = state.communities.find((item) => item.name === communityName);
+    if (!community) {
+      if (!ensureStandaloneQuota("communities")) {
+        throw new Error("试用版小区数量已达上限，请授权后再导入更多小区。");
+      }
+      community = {
+        id: uid(),
+        name: communityName,
+        district: row["片区"].trim(),
+        manager: row["负责人/合作方式"].trim(),
+        note: row["小区备注"].trim(),
+      };
+      state.communities.push(community);
+      createdCommunities += 1;
+    } else {
+      community.district = row["片区"].trim() || community.district;
+      community.manager = row["负责人/合作方式"].trim() || community.manager;
+      community.note = row["小区备注"].trim() || community.note;
+    }
+
+    const importedProperty = {
+      communityId: community.id,
+      name: propertyName,
+      layout: row["户型"].trim(),
+      area: Number(row["面积㎡"] || 0),
+      status: normalizeImportStatus(row["出租状态"]),
+      tenant: row["租客"].trim(),
+      monthlyRent: Number(row["月租收入"] || 0),
+      landlordRent: Number(row["房东租金成本"] || 0),
+      rentDueDate: normalizeImportDate(row["下次交租日"]) || today(),
+      renovationDate: normalizeImportDate(row["装修时间"]),
+      appliances: row["房内家电"].trim(),
+      furniture: row["家具配置"].trim(),
+      note: row["房源备注"].trim(),
+    };
+    const existing = state.properties.find((item) => item.communityId === community.id && item.name === propertyName);
+    if (existing) {
+      Object.assign(existing, importedProperty);
+      updatedProperties += 1;
+    } else {
+      if (!ensureStandaloneQuota("properties")) {
+        throw new Error("试用版房源数量已达上限，请授权后再导入更多房源。");
+      }
+      state.properties.push({ id: uid(), ...importedProperty });
+      createdProperties += 1;
+    }
+  });
+  state.selectedCommunityId = "all";
+  saveLocalState();
+  syncNow(false);
+  return { createdCommunities, createdProperties, updatedProperties };
+}
+
+function propertyWorkbookHtml(rows) {
+  const tableRows = rows
+    .map((row, rowIndex) => {
+      const cells = row
+        .map((cell) => {
+          const tag = rowIndex === 0 ? "th" : "td";
+          return `<${tag}>${excelCell(cell)}</${tag}>`;
+        })
+        .join("");
+      return `<tr>${cells}</tr>`;
+    })
+    .join("");
+  return `
+    <html>
+      <head>
+        <meta charset="UTF-8" />
+        <style>
+          table { border-collapse: collapse; font-family: "Microsoft YaHei", Arial, sans-serif; }
+          th { background: #207a5c; color: #ffffff; font-weight: 700; }
+          th, td { border: 1px solid #b7c5c0; padding: 8px 10px; mso-number-format:"\\@"; }
+        </style>
+      </head>
+      <body>
+        <table>${tableRows}</table>
+      </body>
+    </html>
+  `;
+}
+
+function downloadHtmlExcel(html, filename) {
+  const blob = new Blob([html], { type: "application/vnd.ms-excel;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function normalizeImportStatus(value) {
+  const text = String(value || "").trim();
+  return text === "已出租" || text.toLowerCase() === "rented" ? "rented" : "vacant";
+}
+
+function normalizeImportDate(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  const normalized = text.replaceAll("/", "-").replaceAll(".", "-");
+  const match = normalized.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (!match) return text;
+  return `${match[1]}-${match[2].padStart(2, "0")}-${match[3].padStart(2, "0")}`;
+}
+
+async function openUserAdminModal() {
+  els.modalTitle.textContent = "用户管理";
+  els.modalForm.innerHTML = `<div class="empty-state">正在加载用户列表...</div>`;
+  showModal();
+  try {
+    const { users } = await api("/api/users");
+    els.modalForm.innerHTML = `
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>姓名</th>
+              <th>邮箱</th>
+              <th>角色</th>
+              <th>状态</th>
+              <th>创建时间</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${users
+              .map(
+                (user) => `
+                  <tr>
+                    <td>${escapeHtml(user.name || "-")}</td>
+                    <td>${escapeHtml(user.email)}</td>
+                    <td>${user.role === "admin" ? "管理员" : "成员"}</td>
+                    <td>${user.status === "active" ? "启用" : "停用"}</td>
+                    <td>${escapeHtml(new Date(user.created_at).toLocaleString("zh-CN"))}</td>
+                    <td>
+                      <div class="user-table-actions">
+                        <button class="secondary-button" type="button" data-role="${user.id}">${user.role === "admin" ? "设为成员" : "设为管理员"}</button>
+                        <button class="danger-button" type="button" data-status="${user.id}">${user.status === "active" ? "停用" : "启用"}</button>
+                      </div>
+                    </td>
+                  </tr>
+                `,
+              )
+              .join("")}
+          </tbody>
+        </table>
+      </div>
+      <div class="form-actions">
+        <span></span>
+        <div class="right">
+          <button class="secondary-button" type="button" data-close>关闭</button>
+        </div>
+      </div>
+    `;
+    els.modalForm.querySelectorAll("[data-role]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const target = users.find((user) => user.id === button.dataset.role);
+        await api(`/api/users/${target.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ role: target.role === "admin" ? "member" : "admin" }),
+        });
+        openUserAdminModal();
+      });
+    });
+    els.modalForm.querySelectorAll("[data-status]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const target = users.find((user) => user.id === button.dataset.status);
+        await api(`/api/users/${target.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ status: target.status === "active" ? "disabled" : "active" }),
+        });
+        openUserAdminModal();
+      });
+    });
+    bindCloseButtons();
+  } catch (error) {
+    els.modalForm.innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;
+  }
 }
 
 function normalizePropertyData(data) {
@@ -642,11 +1959,11 @@ function formData() {
   return Object.fromEntries(new FormData(els.modalForm).entries());
 }
 
-function field(label, name, value = "", type = "text", wide = "") {
+function field(label, name, value = "", type = "text", wide = "", list = "") {
   return `
     <div class="form-field ${wide}">
       <label for="${name}">${label}</label>
-      <input id="${name}" name="${name}" type="${type}" value="${escapeAttr(value)}" />
+      <input id="${name}" name="${name}" type="${type}" value="${escapeAttr(value)}" ${list ? `list="${escapeAttr(list)}"` : ""} />
     </div>
   `;
 }
@@ -666,7 +1983,10 @@ function selectField(label, name, options, value = "") {
       <label for="${name}">${label}</label>
       <select id="${name}" name="${name}">
         ${options
-          .map(([optionValue, text]) => `<option value="${escapeAttr(optionValue)}" ${String(optionValue) === String(value) ? "selected" : ""}>${escapeHtml(text)}</option>`)
+          .map(
+            ([optionValue, text]) =>
+              `<option value="${escapeAttr(optionValue)}" ${String(optionValue) === String(value) ? "selected" : ""}>${escapeHtml(text)}</option>`,
+          )
           .join("")}
       </select>
     </div>
@@ -700,5 +2020,3 @@ function escapeHtml(value = "") {
 function escapeAttr(value = "") {
   return escapeHtml(value);
 }
-
-render();

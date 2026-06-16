@@ -1,0 +1,9 @@
+license-keys/
+*.pem
+node_modules/
+.env
+release/
+dist/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
